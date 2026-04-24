@@ -56,7 +56,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.1'
+    implementation 'in.simpletools:llm-client-framework:1.0.2'
 }
 ```
 
@@ -292,6 +292,30 @@ gradle run
 # Publish to GitHub Packages
 gradle publish
 ```
+
+---
+
+## Publishing
+
+### JitPack (Free - Available Now)
+
+```groovy
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+dependencies {
+    implementation 'com.github.simpletoolsindia:llm-client-framework:1.0.2'
+}
+```
+
+JitPack builds the library directly from GitHub releases. Create a release tag:
+```bash
+git tag v1.0.2 && git push origin v1.0.2
+```
+
+### Maven Central (Requires Paid Subscription)
+
+Maven Central publishing requires a paid Sonatype subscription.
 
 ---
 
