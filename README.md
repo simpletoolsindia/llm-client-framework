@@ -68,7 +68,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.0'
+    implementation 'in.simpletools:llm-client-framework:1.0.1'
 }
 ```
 
@@ -88,7 +88,7 @@ For Maven (`pom.xml`):
     <dependency>
         <groupId>in.simpletools</groupId>
         <artifactId>llm-client-framework</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.1</version>
     </dependency>
 </dependencies>
 ```
