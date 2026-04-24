@@ -2,7 +2,6 @@ plugins {
     id 'java'
     id 'application'
     id 'maven-publish'
-    id 'signing'
 }
 
 group = 'com.simpletoolsindia'
@@ -37,6 +36,9 @@ application {
 tasks.named('test') { useJUnit() }
 
 // ============ Publishing Configuration ============
+
+def sonatypeUsername = project.findProperty('sonatypeUsername') ?: System.getenv('OSSRH_USERNAME')
+def sonatypePassword = project.findProperty('sonatypePassword') ?: System.getenv('OSSRH_PASSWORD')
 
 publishing {
     publications {
@@ -87,8 +89,8 @@ publishing {
             name = 'MavenCentral'
             url = 'https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/'
             credentials {
-                username = System.getenv('OSSRH_USERNAME') ?: ''
-                password = System.getenv('OSSRH_PASSWORD') ?: ''
+                username = sonatypeUsername
+                password = sonatypePassword
             }
         }
 
@@ -96,26 +98,22 @@ publishing {
             name = 'Snapshot'
             url = 'https://s01.oss.sonatype.org/content/repositories/snapshots/'
             credentials {
-                username = System.getenv('OSSRH_USERNAME') ?: ''
-                password = System.getenv('OSSRH_PASSWORD') ?: ''
+                username = sonatypeUsername
+                password = sonatypePassword
             }
         }
     }
-}
-
-signing {
-    sign publishing.publications.mavenJava
 }
 
 // Helper tasks
 tasks.register('publishToSnapshot') {
     group = 'publishing'
     description = 'Publish snapshot version to Maven Central'
-    dependsOn 'publish'
+    tasks.findByName('publish')?.dependsOn('assemble')
 }
 
 tasks.register('publishToRelease') {
     group = 'publishing'
-    description = 'Publish release version to Maven Central (requires signing)'
-    dependsOn 'publish'
+    description = 'Publish release version to Maven Central'
+    tasks.findByName('publish')?.dependsOn('assemble')
 }
