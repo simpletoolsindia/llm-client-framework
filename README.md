@@ -26,10 +26,9 @@ A high-performance, unified Java framework for interacting with **12+ LLM provid
 
 ## Installation
 
-### JitPack (Recommended — Free)
+### Gradle (build.gradle)
 
 ```groovy
-// build.gradle
 repositories {
     maven { url 'https://jitpack.io' }
 }
@@ -39,228 +38,588 @@ dependencies {
 }
 ```
 
+### Maven (pom.xml)
+
+```xml
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<dependency>
+    <groupId>com.github.simpletoolsindia</groupId>
+    <artifactId>llm-client-framework</artifactId>
+    <version>v1.1.0</version>
+</dependency>
+```
+
+### Manual Build
+
+```bash
+git clone https://github.com/simpletoolsindia/llm-client-framework.git
+cd llm-client-framework
+./gradlew build    # requires Gradle 7+ or Java 21
+./gradlew install # install to local Maven repo
+```
+
+---
+
+## Setup
+
+### 1. Java Requirement
+
+Requires **Java 21** or higher.
+
+```bash
+java --version   # should show 21+
+```
+
+### 2. Choose a Provider
+
+#### Option A: Local (Free, No API Key)
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull a model
+ollama pull gemma4:latest    # ~4GB, fast
+ollama pull llama3.2:3b       # ~2GB, great for coding
+ollama pull codellama:7b      # code-specialized
+
+# Start server (runs on localhost:11434)
+ollama serve
+```
+
+#### Option B: Cloud (API Key Required)
+
+Get free API keys:
+- **OpenAI**: https://platform.openai.com/api-keys
+- **Claude**: https://console.anthropic.com/settings/keys
+- **DeepSeek**: https://platform.deepseek.com/api_keys
+
+```bash
+# Set environment variables
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+export DEEPSEEK_API_KEY=sk-...
+```
+
+### 3. Quick Test
+
+```bash
+cd llm-client-framework
+./gradlew run   # runs OllamaDemo
+```
+
 ---
 
 ## Quick Start
 
-### Simple Chat
+### Minimal Example
 
 ```java
 import in.simpletools.llm.framework.client.*;
 
-LLMClient client = LLMClient.ollama("gemma4:latest");
-String reply = client.chat("What is recursion?");
-System.out.println(reply);
+public class Main {
+    public static void main(String[] args) {
+        // Create client — local Ollama (free!)
+        LLMClient client = LLMClient.ollama("gemma4:latest");
+
+        // One-liner chat
+        String reply = client.chat("What is recursion?");
+        System.out.println(reply);
+    }
+}
 ```
 
 ### Cloud Providers
 
 ```java
 // OpenAI
-LLMClient openai = LLMClient.openAI("gpt-4o-mini", "sk-...");
+LLMClient openai = LLMClient.openAI("gpt-4o-mini", "sk-your-key");
 
-// Claude
-LLMClient claude = LLMClient.claude("claude-3-5-sonnet", "sk-ant-...");
+// Anthropic Claude
+LLMClient claude = LLMClient.claude("claude-3-5-sonnet-20241022", "sk-ant-your-key");
 
 // DeepSeek
-LLMClient deepseek = LLMClient.deepSeek("deepseek-chat", "sk-...");
+LLMClient deepseek = LLMClient.deepSeek("deepseek-chat", "sk-your-key");
+
+// NVIDIA NIM (free tier available)
+LLMClient nvidia = LLMClient.nvidia("meta/llama-3.1-70b-instruct", "nv-your-key");
+
+// Groq (fast, free tier)
+LLMClient groq = LLMClient.groq("llama-3.1-70b-versatile", "gsk-your-key");
+
+// Mistral
+LLMClient mistral = LLMClient.mistral("mistral-large-latest", "your-key");
+
+// OpenRouter (100+ models, unified API)
+LLMClient openrouter = LLMClient.openRouter("anthropic/claude-3.5-sonnet", "sk-or-your-key");
+```
+
+### Custom Endpoint
+
+```java
+// Local model with custom host
+LLMClient client = LLMClient.ollama("http://192.168.1.100:11434", "llama3.2:latest");
+
+// LM Studio
+LLMClient lmstudio = LLMClient.lmStudio("qwen2.5-coder-7b");
+
+// vLLM server
+LLMClient vllm = LLMClient.vllm("mistral-7b-instruct");
 ```
 
 ---
 
-## Tool Registration — Easy Fluent API
+## Complete Examples
 
-Tools are now dead simple. Use `.tool()` with a lambda:
+### Example 1: Assistant with Tools
 
 ```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
+import in.simpletools.llm.framework.client.*;
+import in.simpletools.llm.framework.tool.*;
+import java.util.concurrent.CompletableFuture;
 
-// Simple tool — just a name, description, and lambda
-client.tool("ping", "Returns pong", () -> "pong");
+public class Assistant {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.ollama("gemma4:latest");
 
-// Tool with parameters
-client.tool("calculate", "Evaluate a math expression",
-    args -> {
-        String expr = args.get("expression").toString();
-        return new javax.script.ScriptEngineManager()
-            .getEngineByName("JavaScript").eval(expr);
-    },
-    Map.of("expression", new ToolRegistry.ParamInfo(
-        "expression", "Math expression", true, String.class)));
+        // Register tools
+        client.tool("calculate", "Evaluate a mathematical expression",
+            args -> {
+                String expr = args.get("expression").toString();
+                return new javax.script.ScriptEngineManager()
+                    .getEngineByName("JavaScript").eval(expr);
+            },
+            Map.of("expression", new ToolRegistry.ParamInfo(
+                "expression", "The math expression", true, String.class)));
 
-// Tool with custom retry (5 attempts, 1s delay)
-client.tool("risky_api", "Call external API",
-    args -> callApi(args),
-    Map.of(), 5, 1000, 2.0, 30000);
+        client.tool("get_date", "Get current date", () -> new java.util.Date().toString());
+
+        // Chat with tool usage
+        String reply = client.chat(
+            "What is 125 + 375? Use the calculate tool. Also tell me today's date."
+        );
+
+        System.out.println(reply);
+    }
+}
 ```
 
-### Annotation-Based Auto-Registration
-
-Annotate methods with `@LLMTool` and register the whole object at once:
+### Example 2: Persistent Conversation with Redis
 
 ```java
-public class MyTools {
-    @LLMTool(name = "calculate", description = "Evaluate math", maxRetries = 3)
+public class PersistentChat {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.openAI("gpt-4o-mini", "sk-your-key");
+
+        // Use Redis for persistent history
+        client.withRedisHistory("user-123-session");
+
+        // Conversation 1
+        client.chat("My name is Alice and I work as a developer");
+        client.chat("What's my name and profession?");
+
+        // Start fresh conversation but same user
+        client.withRedisHistory("user-123-session");  // Load previous context
+
+        // Continue from where we left off
+        String reply = client.chat("What did I tell you about myself?");
+        System.out.println(reply);
+
+        // New conversation
+        client.withRedisHistory("user-456-session");
+        client.chat("This is a completely different user");
+    }
+}
+```
+
+### Example 3: Auto-Discovery with Annotations
+
+```java
+import in.simpletools.llm.framework.client.*;
+import in.simpletools.llm.framework.tool.*;
+
+public class AnnotatedTools {
+    public static void main(String[] args) {
+        // Create tool class with annotations
+        MyTools tools = new MyTools();
+
+        // Register all annotated methods at once
+        LLMClient client = LLMClient.ollama("gemma4:latest");
+        client.registerTools(tools);
+
+        // Use the tools
+        String reply = client.chat(
+            "Calculate sqrt(144) and search for the latest Java news"
+        );
+        System.out.println(reply);
+    }
+}
+
+// Separate tool class
+class MyTools {
+    @LLMTool(name = "calculate", description = "Evaluate math", maxRetries = 2)
     public double calculate(@ToolParam("expr") String expr) {
-        return eval(expr);
+        try {
+            return (double) new javax.script.ScriptEngineManager()
+                .getEngineByName("JavaScript").eval(expr);
+        } catch (Exception e) { return 0; }
     }
 
-    @LLMTool(name = "web_search", description = "Search the web")
+    @LLMTool(name = "web_search", description = "Search the web", maxRetries = 3)
     public String search(@ToolParam("query") String query) {
-        return doSearch(query);
+        return "Search results for: " + query;
+    }
+
+    @LLMTool(name = "get_weather", description = "Get weather for a city")
+    public String weather(@ToolParam("city") String city) {
+        return "Weather in " + city + ": Sunny, 72°F";
     }
 }
-
-// Register all tools at once — auto-discovers @LLMTool methods
-LLMClient client = LLMClient.ollama("gemma4:latest");
-client.registerTools(new MyTools());
 ```
 
-### Built-in System Tools
+### Example 4: System Tools (File & Web)
 
 ```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
+public class SystemToolsExample {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.claude("claude-3-5-sonnet", "sk-ant-...");
 
-// Register ALL system tools (file, web, bash)
-client.withSystemTools();
+        // Register all built-in system tools
+        client.withSystemTools();
 
-// Or selectively
-client.withSystemTools("file");   // read_file, write_file, create_file, list_dir, grep, etc.
-client.withSystemTools("web");     // web_search, fetch_webpage
-client.withSystemTools("shell");   // run_bash
+        // The LLM can now read files, search the web, run commands...
 
-// Now the LLM can use these tools automatically
-String reply = client.chat(
-    "Read README.md and tell me what it's about"
-);
-```
+        // Example 1: Read a file
+        String about = client.chat(
+            "Read the file at /tmp/notes.txt and summarize it"
+        );
 
-Available system tools:
+        // Example 2: Web search
+        String news = client.chat(
+            "Search the web for the latest Java 21 features"
+        );
 
-| Tool | Description | Platforms |
-|------|-------------|-----------|
-| `read_file` | Read file contents | Win/Mac/Linux |
-| `write_file` | Write/overwrite a file | Win/Mac/Linux |
-| `create_file` | Create empty file or touch | Win/Mac/Linux |
-| `append_file` | Append to a file | Win/Mac/Linux |
-| `delete_file` | Delete a file | Win/Mac/Linux |
-| `list_dir` | List directory contents | Win/Mac/Linux |
-| `find_files` | Find files by glob pattern | Win/Mac/Linux |
-| `grep` | Search text within files | Win/Mac/Linux |
-| `path_exists` | Check if path exists | Win/Mac/Linux |
-| `file_info` | Get file metadata | Win/Mac/Linux |
-| `web_search` | Perform a web search | Win/Mac/Linux |
-| `fetch_webpage` | Fetch webpage content | Win/Mac/Linux |
-| `run_bash` | Execute shell command | Win/Mac/Linux |
+        // Example 3: Execute command
+        String disk = client.chat(
+            "Run 'df -h' and tell me about disk usage"
+        );
 
----
+        // Example 4: Write file
+        String write = client.chat(
+            "Create a file /tmp/test.txt with content 'Hello from LLM!'"
+        );
 
-## Token Tracking & Context Window
-
-Know your context usage at any time:
-
-```java
-LLMClient client = LLMClient.openAI("gpt-4o", "sk-...");
-
-// After chatting
-client.chat("Tell me about Java");
-client.chat("What is CompletableFuture?");
-
-// Get context info
-TokenTracker.ContextInfo info = client.getContextInfo();
-System.out.println(info.summary());
-// Output: [gpt-4o] 2847 / 128000 tokens (2.2%) | prompt=1234, completion=1613 | 4 messages
-
-// Check if running low
-if (client.getTokenTracker().isNearLimit()) {
-    client.clearHistory();
+        // Example 5: List directory
+        String files = client.chat(
+            "List all .java files in the current directory"
+        );
+    }
 }
-
-// Print detailed breakdown
-client.printContextInfo();
 ```
 
-Known model limits are auto-configured. You can also set manually:
+### Example 5: Async & Streaming
 
 ```java
-client.getTokenTracker().setModel("my-model", 32000L);
+import java.util.concurrent.CompletableFuture;
+
+public class AsyncStreaming {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.ollama("gemma4:latest");
+
+        // === ASYNC: Non-blocking chat ===
+        System.out.println("Starting async request...");
+        CompletableFuture<String> future = client.chatAsync(
+            "Write a short story about a robot"
+        );
+
+        // Do other work while waiting
+        System.out.println("Doing other work...");
+
+        // Get result when ready
+        future.thenAccept(reply -> {
+            System.out.println("=== Story ===");
+            System.out.println(reply);
+        }).join();  // Wait for completion
+
+        // === STREAMING: Real-time tokens ===
+        System.out.print("Streaming: ");
+        client.streamChat(
+            "Count from 5 to 1",
+            chunk -> System.out.print(chunk),           // on token
+            error -> System.err.println("Error: " + error)  // on error
+        );
+        System.out.println();
+
+        // === PARALLEL REQUESTS ===
+        CompletableFuture<String> q1 = client.chatAsync("What's 2+2?");
+        CompletableFuture<String> q2 = client.chatAsync("What's 3+3?");
+        CompletableFuture<String> q3 = client.chatAsync("What's 4+4?");
+
+        CompletableFuture.allOf(q1, q2, q3).join();
+
+        System.out.println("2+2 = " + q1.join());
+        System.out.println("3+3 = " + q2.join());
+        System.out.println("4+4 = " + q3.join());
+    }
+}
+```
+
+### Example 6: Token Tracking & Context Management
+
+```java
+public class TokenTracking {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.openAI("gpt-4o", "sk-your-key");
+
+        // Before chat
+        System.out.println("Initial: " + client.getContextInfo().summary());
+
+        // Do several chats
+        client.chat("Explain quantum computing in detail");
+        client.chat("Now explain entanglement");
+        client.chat("What about superposition?");
+
+        // Check context usage
+        var info = client.getContextInfo();
+        System.out.println("\n=== Context Usage ===");
+        System.out.println("Model: " + info.model());
+        System.out.println("Used: " + info.usedTokens() + " / " + info.totalLimit());
+        System.out.println("Remaining: " + info.remainingTokens());
+        System.out.println("Usage: " + String.format("%.1f%%", info.usagePercent()));
+
+        // Smart context management
+        if (client.getTokenTracker().isNearLimit()) {
+            System.out.println("\nContext near limit! Clearing history...");
+            client.clearHistory();
+        }
+
+        // Or just print it nicely
+        client.printContextInfo();
+    }
+}
+```
+
+### Example 7: Builder Pattern with Full Config
+
+```java
+public class BuilderExample {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.builder()
+            .config(ClientConfig.of(Provider.OLLAMA).model("llama3.2:latest"))
+            .history(new ConversationHistory(50))  // keep last 50 messages
+            .retry(new LLMClient.RetryConfig(5,
+                java.time.Duration.ofMillis,
+                2.0,
+                java.time.Duration.ofSeconds(30)))
+            .logger(SimpleLogger.get("MyApp").setLevel(SimpleLogger.Level.DEBUG))
+            .build();
+
+        // Or with Redis history
+        LLMClient redisClient = LLMClient.builder()
+            .config(ClientConfig.of(Provider.OPENAI).model("gpt-4o-mini").apiKey("sk-..."))
+            .history(new RedisHistory.withJedis("localhost", 6379, "my-session"))
+            .build();
+    }
+}
+```
+
+### Example 8: Multi-Tool Chain
+
+```java
+public class ToolChain {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.openAI("gpt-4o", "sk-your-key");
+
+        // Register multiple tools that work together
+        client.tool("search_files", "Find files matching a glob pattern",
+            args -> {
+                String path = args.get("path").toString();
+                String pattern = args.get("pattern").toString();
+                return "Found: " + path + "/" + pattern;
+            },
+            Map.of(
+                "path", new ToolRegistry.ParamInfo("path", "Directory", true, String.class),
+                "pattern", new ToolRegistry.ParamInfo("pattern", "Glob pattern", true, String.class)
+            ));
+
+        client.tool("read_file", "Read a file",
+            args -> {
+                String path = args.get("path").toString();
+                return "File content: (would read " + path + ")";
+            },
+            Map.of("path", new ToolRegistry.ParamInfo("path", "File path", true, String.class)));
+
+        // Complex multi-tool request
+        String reply = client.chat(
+            "Find all .java files in /project, read the largest one, and summarize it"
+        );
+        System.out.println(reply);
+    }
+}
+```
+
+### Example 9: Error Handling
+
+```java
+public class ErrorHandling {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.ollama("gemma4:latest");
+
+        // Sync with error handling
+        try {
+            String reply = client.chat("Hello!");
+            System.out.println(reply);
+        } catch (Exception e) {
+            System.err.println("Chat failed: " + e.getMessage());
+        }
+
+        // Async with error handling
+        client.chatAsync("Tell me a joke")
+            .thenAccept(reply -> System.out.println(reply))
+            .exceptionally(ex -> {
+                System.err.println("Error: " + ex.getMessage());
+                return null;
+            });
+
+        // Enable debug logging to diagnose issues
+        client.setLogLevel(SimpleLogger.Level.DEBUG);
+        SimpleLogger.get("LLMClient").setLevel(SimpleLogger.Level.TRACE);
+    }
+}
+```
+
+### Example 10: All Features Combined
+
+```java
+public class FullFeatured {
+    public static void main(String[] args) {
+        // Create client with all features enabled
+        LLMClient client = LLMClient.openAI("gpt-4o", "sk-your-key")
+            .setLogLevel(SimpleLogger.Level.INFO)      // Enable logging
+            .withRedisHistory("full-demo-session")       // Persistent history
+            .withSystemTools();                         // Built-in tools
+
+        // Check initial context
+        System.out.println("Starting: " + client.getContextInfo().summary());
+
+        // Register custom tools
+        client.tool("calculate", "Evaluate math",
+            args -> eval(args.get("expression").toString()),
+            Map.of("expression", new ToolRegistry.ParamInfo(
+                "expression", "Math expression", true, String.class)));
+
+        // Chat
+        String reply = client.chat(
+            "Read /etc/hostname if it exists, calculate 100*100, and search for 'Java 21'"
+        );
+
+        System.out.println("\n=== Final Context ===");
+        client.printContextInfo();
+
+        System.out.println("\n=== Reply ===");
+        System.out.println(reply);
+    }
+
+    static double eval(String expr) {
+        try {
+            return (double) new javax.script.ScriptEngineManager()
+                .getEngineByName("JavaScript").eval(expr);
+        } catch (Exception e) { return 0; }
+    }
+}
 ```
 
 ---
 
-## Redis-Backed Conversation History
+## API Reference
 
-Persistent conversations across sessions:
+### Factory Methods
 
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
+| Provider | Method | API Key? |
+|----------|--------|----------|
+| Ollama | `LLMClient.ollama("model")` | No |
+| LM Studio | `LLMClient.lmStudio("model")` | No |
+| vLLM | `LLMClient.vllm("model")` | No |
+| Jan | `LLMClient.jan("model")` | No |
+| OpenAI | `LLMClient.openAI("gpt-4o", "sk-...")` | Yes |
+| Claude | `LLMClient.claude("claude-3-5-sonnet", "sk-ant-...")` | Yes |
+| DeepSeek | `LLMClient.deepSeek("deepseek-chat", "sk-...")` | Yes |
+| NVIDIA | `LLMClient.nvidia("meta/llama-3.1-70b", "nv-...")` | Yes |
+| Groq | `LLMClient.groq("llama-3.1-70b", "gsk-...")` | Yes |
+| Mistral | `LLMClient.mistral("mistral-large", "key")` | Yes |
+| OpenRouter | `LLMClient.openRouter("model", "sk-or-...")` | Yes |
 
-// Attach Redis-backed history
-client.withRedisHistory("user-123-conversation");
+### Client Methods
 
-// All chat history is now persisted to Redis
-client.chat("My name is Ravi");
-client.chat("What city do I live in?");
+| Method | Description |
+|--------|-------------|
+| `chat(String)` | Send message, blocking |
+| `chat(String, Map)` | With system prompt, temperature |
+| `chatAsync(String)` | Non-blocking, returns CompletableFuture |
+| `streamChat(String, Consumer)` | Stream tokens to consumer |
+| `tool(name, desc, handler)` | Register tool with lambda |
+| `tool(name, desc, handler, params)` | Register with param types |
+| `registerTools(Object)` | Auto-register all @LLMTool methods |
+| `withSystemTools()` | Register built-in file/web/bash tools |
+| `withRedisHistory(id)` | Use Redis for conversation history |
+| `withMemoryHistory()` | Default in-memory history |
+| `getContextInfo()` | Get token usage & context window |
+| `getTokenTracker()` | Get TokenTracker for detailed stats |
+| `printContextInfo()` | Print formatted usage stats |
+| `clearHistory()` | Clear conversation history |
+| `setLogLevel(Level)` | Set logging level |
+| `withRetry(config)` | Configure retry behavior |
 
-// Save/load conversations
-// (also auto-saves on each message with 24h TTL)
-
-// Switch to a different conversation
-client.withRedisHistory("user-456-different-topic");
-
-// Back to in-memory (default)
-client.withMemoryHistory();
-```
-
-For Redis unavailable scenarios, an in-memory fallback is used automatically.
-
----
-
-## Logging
-
-Built-in logger with no external dependencies:
-
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest")
-    .setLogLevel(SimpleLogger.Level.DEBUG);
-
-// Or configure globally
-SimpleLogger.setGlobalLevel(SimpleLogger.Level.INFO);
-SimpleLogger.get("LLMClient").info("Starting...");
-SimpleLogger.get("LLMClient").debug("Request: {}", request);
-SimpleLogger.get("LLMClient").warn("Retrying after failure");
-SimpleLogger.get("LLMClient").error("Failed", exception);
-```
-
----
-
-## Async & Streaming
-
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
-
-// Async — non-blocking
-CompletableFuture<String> future = client.chatAsync("Tell me a story");
-future.thenAccept(reply -> System.out.println("Got reply!"));
-
-// Streaming — real-time tokens
-client.streamChat("Count to 10", chunk -> System.out.print(chunk));
-```
-
----
-
-## @LLMTool Annotation Reference
+### @LLMTool Annotation
 
 ```java
 @LLMTool(
-    name = "my_tool",           // Tool name (defaults to method name)
-    description = "Does X",    // Description (defaults to method name)
-    maxRetries = 3,             // Retry attempts (default 3, 0 = disable)
-    retryDelayMs = 500,         // Initial delay ms (default 500)
-    backoffMultiplier = 2.0,   // Backoff multiplier (default 2.0)
-    maxRetryDelayMs = 10000    // Max delay ms (default 10000)
+    name = "tool_name",           // Tool name (defaults to method name)
+    description = "Does X",      // Description (defaults to method name)
+    maxRetries = 3,              // Retry attempts (default 3, 0 = disable)
+    retryDelayMs = 500,          // Initial delay ms (default 500)
+    backoffMultiplier = 2.0,     // Backoff multiplier (default 2.0)
+    maxRetryDelayMs = 10000      // Max delay ms (default 10000)
 )
 ```
+
+### @ToolParam Annotation
+
+```java
+@ToolParam(
+    name = "param_name",         // Parameter name
+    description = "What it is",  // Description
+    required = true              // Required? (default true)
+)
+```
+
+---
+
+## Built-in System Tools
+
+Enable with: `client.withSystemTools()`
+
+| Tool | Args | Description |
+|------|------|-------------|
+| `read_file` | `path` | Read entire file contents |
+| `write_file` | `path`, `content` | Write/overwrite file |
+| `create_file` | `path` | Create empty file |
+| `append_file` | `path`, `content` | Append to file |
+| `delete_file` | `path` | Delete file or directory |
+| `list_dir` | `path`, `recursive` | List directory contents |
+| `find_files` | `path`, `pattern` | Find files by glob |
+| `grep` | `path`, `pattern` | Search text in files |
+| `path_exists` | `path` | Check if path exists |
+| `file_info` | `path` | Get file metadata |
+| `web_search` | `query`, `limit` | Search the web |
+| `fetch_webpage` | `url`, `max_length` | Fetch webpage content |
+| `run_bash` | `command`, `cwd` | Execute shell command |
 
 ---
 
@@ -275,9 +634,9 @@ client.streamChat("Count to 10", chunk -> System.out.print(chunk));
 ┌─────────────────────────────────────────────────────┐
 │                        LLMClient                     │
 │  .tool() / .registerTools() / .withSystemTools()   │
-│  .chat() / .chatAsync() / .streamChat()            │
-│  .getContextInfo() / .withRedisHistory()            │
-│  TokenTracker + SimpleLogger (built-in)            │
+│  .chat() / .chatAsync() / .streamChat()           │
+│  .getContextInfo() / .withRedisHistory()           │
+│  TokenTracker + SimpleLogger (built-in)             │
 └─────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -296,13 +655,6 @@ client.streamChat("Count to 10", chunk -> System.out.print(chunk));
 └─────────────────────────────────────────────────────┘
 ```
 
-**Design Patterns Used:**
-- **Factory Pattern** — `LLMClient.ollama()`, `LLMClient.openAI()`, etc.
-- **Builder Pattern** — `LLMClient.builder()` for fluent configuration
-- **Strategy Pattern** — `ProviderAdapter` for pluggable LLM backends
-- **Auto-Registration** — `@LLMTool` annotation for zero-config tools
-- **Retry Pattern** — Exponential backoff per-tool, configurable
-
 ---
 
 ## Project Structure
@@ -310,106 +662,67 @@ client.streamChat("Count to 10", chunk -> System.out.print(chunk));
 ```
 src/main/java/in/simpletools/llm/framework/
 ├── client/
-│   ├── LLMClient.java           # Main client — tools, chat, history
-│   └── LLMClientFactory.java    # Static factory shortcuts
+│   ├── LLMClient.java           # Main client
+│   └── LLMClientFactory.java    # Factory shortcuts
 ├── config/
-│   ├── Provider.java             # Enum for all 12+ providers
-│   └── ClientConfig.java        # Configuration builder
+│   ├── Provider.java             # 12+ provider enum
+│   └── ClientConfig.java        # Configuration
 ├── model/
-│   ├── Message.java             # Chat messages
-│   ├── LLMRequest.java         # Request builder
-│   ├── LLMResponse.java         # Response + Usage
-│   ├── Tool.java               # Tool definitions
-│   └── ToolCall.java           # Tool invocation
+│   ├── Message.java, LLMRequest.java, LLMResponse.java
+│   ├── Tool.java, ToolCall.java
 ├── adapter/
 │   ├── ProviderAdapter.java     # Adapter interface
-│   ├── OllamaAdapter.java      # Ollama implementation
-│   ├── OpenAIAdapter.java      # OpenAI-compatible
-│   └── ClaudeAdapter.java      # Claude API
+│   ├── OllamaAdapter.java, OpenAIAdapter.java, ClaudeAdapter.java
 ├── tool/
-│   ├── LLMTool.java            # @LLMTool annotation (with retry)
+│   ├── LLMTool.java            # @LLMTool annotation
 │   ├── ToolParam.java          # @ToolParam annotation
-│   ├── ToolRegistry.java       # Tool registry + auto-discovery
-│   └── OllamaTool.java        # Legacy annotation (still supported)
+│   ├── ToolRegistry.java       # Auto-discovery + retry
+│   └── OllamaTool.java        # Legacy annotation
 ├── history/
-│   ├── ConversationHistory.java  # In-memory history
-│   ├── ConversationHistoryStore.java  # History interface
-│   ├── RedisHistory.java       # Redis-backed history
-│   └── TokenTracker.java      # Token usage + context tracking
+│   ├── ConversationHistory.java  # In-memory
+│   ├── ConversationHistoryStore.java
+│   ├── RedisHistory.java       # Redis-backed
+│   └── TokenTracker.java      # Token tracking
 ├── tools/
-│   └── SystemTools.java        # Built-in file/web/bash tools
+│   └── SystemTools.java        # Built-in tools
 └── utils/
-    └── SimpleLogger.java      # Built-in logger (no deps)
+    └── SimpleLogger.java      # Built-in logger
 ```
-
----
-
-## Environment Setup
-
-### Ollama (Local — Recommended)
-
-```bash
-# Install
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull model
-ollama pull gemma4:latest
-
-# Run server (localhost:11434)
-ollama serve
-```
-
-### API Keys
-
-```bash
-export OPENAI_API_KEY=sk-your-key-here
-export ANTHROPIC_API_KEY=sk-ant-your-key-here
-export DEEPSEEK_API_KEY=sk-your-key-here
-```
-
----
-
-## Build & Run
-
-```bash
-# Build
-gradle build
-
-# Run demo
-gradle run
-
-# Clean
-gradle clean
-```
-
-> Note: Requires Gradle 7+ or Java 21-compatible build tooling.
 
 ---
 
 ## Troubleshooting
 
-### Connection Refused (Local Providers)
-1. Ensure Ollama/LM Studio is running: `ollama serve`
-2. Check URL: custom host if not on localhost
+### `Connection refused` (Local Providers)
+```bash
+# Check Ollama is running
+ollama serve
 
-### 401 Unauthorized (Cloud)
-1. Verify API key is valid
-2. Check key has required permissions
+# Test manually
+curl http://localhost:11434/api/tags
+```
 
-### Tool Not Being Called
-1. Ensure tool description is clear
-2. Check parameter types match
-3. Some models don't support function calling (use OpenAI or Claude)
+### `401 Unauthorized` (Cloud)
+```bash
+# Verify key is set
+echo $OPENAI_API_KEY
 
-### Context Window Full
+# Test the key
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY"
+```
+
+### Tool not being called
+1. Tool description must be clear and descriptive
+2. Parameter names must match what the LLM expects
+3. Some models don't support tools (use OpenAI or Claude)
+
+### Out of context window
 ```java
 // Check usage
 client.printContextInfo();
 
-// Clear history when near limit
-client.clearHistory();
-
-// Or check programmatically
+// Clear when near limit
 if (client.getTokenTracker().isNearLimit()) {
     client.clearHistory();
 }
@@ -420,8 +733,6 @@ if (client.getTokenTracker().isNearLimit()) {
 ## License
 
 MIT License — See [LICENSE](LICENSE)
-
----
 
 **Repository**: https://github.com/simpletoolsindia/llm-client-framework
 **Issues**: https://github.com/simpletoolsindia/llm-client-framework/issues
