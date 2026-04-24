@@ -1,6 +1,6 @@
 # LLM Client Framework for Java
 
-A lightweight, unified Java framework for interacting with **12+ LLM providers** through a single, consistent API. Supports local models (Ollama, LM Studio, vLLM) and cloud providers (OpenAI, Claude, DeepSeek, etc.).
+A high-performance, functional Java framework for interacting with **12+ LLM providers** through a single, consistent API. Built with modern Java patterns: CompletableFuture for async, thread-safe tool execution, and configurable retry logic.
 
 [![Maven Central](https://img.shields.io/badge/Maven-JitPack-green)](https://jitpack.io/#simpletoolsindia/llm-client-framework)
 [![Java](https://img.shields.io/badge/Java-21+-blue)](https://www.java.com/)
@@ -10,43 +10,19 @@ A lightweight, unified Java framework for interacting with **12+ LLM providers**
 
 ## Features
 
-- **12+ Providers** — Local and cloud LLMs in one library
-- **Single API** — Switch providers without changing code
-- **Function Calling** — Register Java methods as LLM tools
+- **12+ Providers** — Local (Ollama, LM Studio, vLLM, Jan) and Cloud (OpenAI, Claude, DeepSeek, etc.)
+- **Async/Await** — CompletableFuture-based async chat for high performance
+- **Thread-Safe Tool Execution** — Parallel tool execution with configurable retry
 - **Streaming** — Real-time token-by-token responses
 - **Conversation History** — Automatic context management
-- **Zero Dependencies** — Uses only Java standard library + Gson
-
----
-
-## Supported Providers
-
-### Local (Free, Privacy-First)
-
-| Provider | Default URL | Best For |
-|----------|-------------|----------|
-| **Ollama** | `localhost:11434` | General purpose, wide model support |
-| **LM Studio** | `localhost:1234` | Desktop GPU acceleration |
-| **vLLM** | `localhost:8000` | High-throughput serving |
-| **Jan** | `localhost:1337` | Local-first, no cloud |
-
-### Cloud (API Key Required)
-
-| Provider | Base URL | Notable Models |
-|----------|----------|----------------|
-| **OpenAI** | `api.openai.com` | GPT-4o, GPT-4o-mini, o1 |
-| **Claude** | `api.anthropic.com` | Claude 3.5 Sonnet, Claude 3 Opus |
-| **DeepSeek** | `api.deepseek.com` | DeepSeek Coder, V3 |
-| **NVIDIA NIM** | `integrate.api.nvidia.com` | Llama 3.1, Mistral |
-| **OpenRouter** | `openrouter.ai` | Access 100+ models |
-| **Mistral** | `api.mistral.ai` | Mixtral, Codestral |
-| **Groq** | `api.groq.com` | Fast inference, Llama |
+- **Builder Pattern** — Fluent API for client configuration
+- **Zero External Dependencies** — Uses only Java standard library + Gson
 
 ---
 
 ## Installation
 
-### Option 1: JitPack (Recommended - Free)
+### JitPack (Recommended - Free)
 
 ```groovy
 // build.gradle
@@ -59,13 +35,13 @@ dependencies {
 }
 ```
 
-### Option 2: GitHub Packages
+### GitHub Packages
 
 ```groovy
 repositories {
     maven {
         name = "GitHubPackages"
-        url = uri("https://maven.pkg.github.com/YOUR_USERNAME/llm-client-framework")
+        url = uri("https://maven.pkg.github.com/simpletoolsindia/llm-client-framework")
         credentials {
             username = System.getenv("GITHUB_ACTOR") ?: ""
             password = System.getenv("GITHUB_TOKEN") ?: ""
@@ -78,27 +54,18 @@ dependencies {
 }
 ```
 
-### Option 3: Local Build
-
-```bash
-git clone https://github.com/simpletoolsindia/llm-client-framework.git
-cd llm-client-framework
-gradle build
-gradle install
-```
-
 ---
 
 ## Quick Start
 
-### 1. Chat with Local Ollama
+### Basic Chat
 
 ```java
 import in.simpletools.llm.framework.client.*;
 
 public class Main {
     public static void main(String[] args) {
-        // Create client - uses Ollama by default
+        // Create client with Ollama (local, free)
         LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
         // Simple chat
@@ -108,20 +75,17 @@ public class Main {
 }
 ```
 
-### 2. Chat with Cloud Provider
+### Cloud Providers
 
 ```java
-// OpenAI example
+// OpenAI
 LLMClient openai = LLMClientFactory.openAI("gpt-4o-mini", "sk-...");
 
-// Claude example
-LLMClient claude = LLMClientFactory.claude("claude-sonnet-4-20250514", "sk-ant-...");
+// Claude
+LLMClient claude = LLMClientFactory.claude("claude-3-5-sonnet", "sk-ant-...");
 
-// DeepSeek example
+// DeepSeek
 LLMClient deepseek = LLMClientFactory.deepSeek("deepseek-chat", "sk-...");
-
-String response = claude.chat("Explain quantum entanglement in simple terms");
-System.out.println(response);
 ```
 
 ---
@@ -134,17 +98,12 @@ System.out.println(response);
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
 // First message
-String answer1 = client.chat("My name is Ravi and I live in Bangalore.");
-System.out.println("AI: " + answer1);
+client.chat("My name is Ravi and I live in Bangalore.");
+String answer = client.chat("What city do I live in?");
+System.out.println(answer); // Bangalore
 
-// Follow-up question (AI remembers context)
-String answer2 = client.chat("What city do I live in?");
-System.out.println("AI: " + answer2);
-// Output: Bangalore (from conversation history)
-
-// View conversation
+// View conversation history
 System.out.println("Messages: " + client.getHistory().size());
-// Output: 4 messages (user, assistant, user, assistant)
 
 // Clear and start fresh
 client.clearHistory();
@@ -155,12 +114,9 @@ client.clearHistory();
 ```java
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
-// Set AI personality via options
 String response = client.chat("Explain photosynthesis", Map.of(
     "system", "You are a friendly science teacher who uses simple words."
 ));
-
-System.out.println(response);
 ```
 
 ### Example 3: Streaming Responses
@@ -168,183 +124,120 @@ System.out.println(response);
 ```java
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
-System.out.print("Writing story: ");
-client.streamChat("Write a short story about a robot learning to dance", chunk -> {
-    System.out.print(chunk);
+System.out.print("Generating: ");
+client.streamChat("Write a haiku about coding", chunk -> {
+    System.out.print(chunk); // Tokens appear in real-time
 });
-System.out.println();
 ```
 
-### Example 4: Function Calling (Calculator Tool)
+### Example 4: Async Chat (Non-blocking)
 
 ```java
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
-// Register a tool the LLM can call
+// Non-blocking - returns immediately
+CompletableFuture<String> future = client.chatAsync("Tell me a story");
+
+// Do other work while waiting...
+System.out.println("Waiting for response...");
+
+future.thenAccept(response -> {
+    System.out.println("Story: " + response);
+});
+```
+
+### Example 5: Function Calling with Retry
+
+```java
+LLMClient client = LLMClientFactory.ollama("gemma4:latest");
+
+// Register calculator tool with automatic retry
 client.registerTool(
     "calculate",
-    "Evaluates a mathematical expression and returns the result",
+    "Evaluates a mathematical expression",
     args -> {
         String expr = (String) args.get("expression");
-        try {
-            // Use JavaScript engine for math
-            return new javax.script.ScriptEngineManager()
-                .getEngineByName("JavaScript")
-                .eval(expr);
-        } catch (Exception e) {
-            return "Error: " + e.getMessage();
-        }
+        return new javax.script.ScriptEngineManager()
+            .getEngineByName("JavaScript")
+            .eval(expr);
     },
-    java.util.Map.of(
-        "expression", new ToolRegistry.ParamInfo(
-            "expression",
-            "The math expression to evaluate (e.g., '25 * 4 + 10')",
-            true,
-            String.class
-        )
-    )
+    Map.of("expression", new ToolRegistry.ParamInfo(
+        "expression", "Math expression", true, String.class))
 );
 
-// LLM will call the calculate tool automatically
-String response = client.chat("What is 25 multiplied by 4, plus 10?");
-System.out.println(response);
-// LLM recognizes it needs math -> calls calculate tool -> returns 110
+// LLM will call the tool automatically with retry on failure
+String response = client.chat(
+    "What is (125 + 375) / 25? Use the calculate tool."
+);
 ```
 
-### Example 5: File Search Tool
+### Example 6: Custom Retry Configuration
+
+```java
+import java.time.Duration;
+
+LLMClient client = LLMClientFactory.ollama("gemma4:latest");
+
+// Customize retry behavior
+RetryConfig retryConfig = new RetryConfig(
+    5,                    // max attempts
+    Duration.ofMillis, // initial delay
+    2.0,                  // backoff multiplier
+    Duration.ofSeconds(30)   // max delay
+);
+
+client.withRetry(retryConfig);
+```
+
+### Example 7: Builder Pattern
+
+```java
+LLMClient client = LLMClient.builder()
+    .config(ClientConfig.of(Provider.OLLAMA).model("gemma4:latest"))
+    .retry(RetryConfig.defaults())
+    .build();
+```
+
+### Example 8: Multiple Tools
 
 ```java
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
-// Register a file search tool
-client.registerTool(
-    "search_files",
-    "Search for files matching a pattern in a directory",
-    args -> {
-        String dir = (String) args.get("directory");
-        String pattern = (String) args.get("pattern");
-        // Implementation logic here
-        return "Found: file1.java, file2.java";
-    },
-    java.util.Map.of(
-        "directory", new ToolRegistry.ParamInfo("directory", "Directory to search", true, String.class),
-        "pattern", new ToolRegistry.ParamInfo("pattern", "File pattern (e.g., '*.java')", true, String.class)
-    )
+// Calculator tool
+client.registerTool("calculate", "Math expression", args -> {
+    return new javax.script.ScriptEngineManager()
+        .getEngineByName("JavaScript")
+        .eval((String) args.get("expression"));
+}, Map.of("expression", new ToolRegistry.ParamInfo(
+    "expression", "Math expression", true, String.class)));
+
+// File search tool
+client.registerTool("search_files", "Search files", args -> {
+    String pattern = (String) args.get("pattern");
+    return "Found: file1.java, file2.java"; // Implement actual logic
+}, Map.of("pattern", new ToolRegistry.ParamInfo(
+    "pattern", "File pattern", true, String.class)));
+
+// LLM chooses appropriate tool
+String response = client.chat(
+    "Calculate sqrt(144) and then find all .java files"
 );
-
-String response = client.chat("Find all Java files in my src folder");
-System.out.println(response);
 ```
 
-### Example 6: Using Different Providers
-
-```java
-public class ProviderDemo {
-    public static void main(String[] args) {
-        // Local - No API key needed
-        LLMClient local = LLMClientFactory.ollama("gemma4:latest");
-
-        // Cloud - Requires API key
-        LLMClient openai = LLMClientFactory.openAI("gpt-4o", System.getenv("OPENAI_API_KEY"));
-        LLMClient claude = LLMClientFactory.claude("claude-3-5-sonnet-20240620", System.getenv("ANTHROPIC_API_KEY"));
-        LLMClient deepseek = LLMClientFactory.deepSeek("deepseek-chat", System.getenv("DEEPSEEK_API_KEY"));
-        LLMClient groq = LLMClientFactory.groq("llama-3.1-70b-versatile", System.getenv("GROQ_API_KEY"));
-
-        // All use the same API!
-        System.out.println(local.chat("Hello"));
-        System.out.println(claude.chat("Hello"));
-    }
-}
-```
-
-### Example 7: Custom Configuration
-
-```java
-import in.simpletools.llm.framework.config.*;
-
-// Build custom client
-ClientConfig config = ClientConfig.of(Provider.OLLAMA)
-    .baseUrl("http://192.168.1.100:11434")  // Custom host
-    .model("llama3.1:8b")                    // Specific model
-    .temperature(0.7)                         // Creativity level (0-2)
-    .maxTokens                         // Max response length
-    .stream(true);                           // Enable streaming
-
-LLMClient client = LLMClient.create(config);
-
-// Or with custom base URL directly
-LLMClient custom = LLMClientFactory.ollama("http://custom-host:11434", "llama3");
-```
-
-### Example 8: Low-Level API Access
+### Example 9: Low-Level API Access
 
 ```java
 import in.simpletools.llm.framework.model.*;
 
 LLMClient client = LLMClientFactory.ollama("gemma4:latest");
 
-// Build custom message
-Message userMsg = new Message(Message.Role.user, "What is 2+2?");
-String response = client.chat(userMsg);
-
-// Access raw response data
+// Build custom request
 LLMRequest request = LLMRequest.builder()
     .model("gemma4:latest")
-    .addMessage(Message.ofSystem("You are a math tutor"))
+    .addMessage(Message.ofSystem("You are a helpful assistant"))
     .addMessage(Message.ofUser("What is 2+2?"))
-    .temperature(0.5)
+    .temperature(0.7)
     .build();
-
-System.out.println(request);
-```
-
----
-
-## API Reference
-
-### Factory Methods (LLMClientFactory)
-
-```java
-// Local providers (no API key)
-LLMClient.ollama()                    // Default: gemma4:latest
-LLMClient.ollama("llama3.1:8b")
-LLMClient.ollama("http://host:11434", "model")
-LLMClient.lmStudio("model-name")
-LLMClient.vllm("model-name")
-LLMClient.jan("model-name")
-
-// Cloud providers (API key required)
-LLMClient.openAI("gpt-4o", "sk-...")
-LLMClient.claude("claude-3-5-sonnet", "sk-ant-...")
-LLMClient.deepSeek("deepseek-chat", "sk-...")
-LLMClient.nvidia("meta/llama-3.1-70b", "nv-...")
-LLMClient.openRouter("anthropic/claude-3.5-sonnet", "sk-or-...")
-LLMClient.mistral("mistral-large-latest", "key")
-LLMClient.groq("llama-3.1-70b-versatile", "key")
-```
-
-### Client Methods (LLMClient)
-
-| Method | Description |
-|--------|-------------|
-| `chat(String message)` | Send message, get text response |
-| `chat(String, Map<String,String>)` | With options (system, temperature, etc.) |
-| `chat(Message)` | Send structured message object |
-| `streamChat(String, Consumer<String>)` | Stream tokens to consumer |
-| `registerTool(...)` | Register a function for LLM to call |
-| `getHistory()` | Get ConversationHistory object |
-| `clearHistory()` | Clear all conversation history |
-| `clearLastN(int n)` | Remove last n messages |
-
-### Tool Registration
-
-```java
-client.registerTool(
-    String name,                           // Tool name (e.g., "calculate")
-    String description,                    // What the tool does
-    Function<Map<String,Object>, Object> handler,  // Implementation
-    Map<String, ParamInfo> parameters      // Parameter definitions
-);
 ```
 
 ---
@@ -352,35 +245,112 @@ client.registerTool(
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Your Application                      │
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                     LLMClient                           │
-│  • chat()                                               │
-│  • streamChat()                                        │
-│  • registerTool()                                      │
-│  • conversation history                                │
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                  ProviderAdapter                         │
-│            (Strategy Pattern)                           │
-│                                                          │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐ │
-│   │ Ollama   │  │ OpenAI   │  │ Claude   │  │ etc... │ │
-│   └──────────┘  └──────────┘  └──────────┘  └────────┘ │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      Your Application                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                        LLMClient                             │
+│  • chat() / chatAsync() / streamChat()                       │
+│  • registerTool() / withRetry()                              │
+│  • CompletableFuture for async operations                    │
+│  • Thread-safe tool execution with retry                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    ProviderAdapter                           │
+│              (Strategy Pattern)                              │
+│                                                              │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
+│   │ Ollama   │  │ OpenAI   │  │ Claude   │  │ Custom      │  │
+│   └──────────┘  └──────────┘  └──────────┘  └─────────────┘  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Key Patterns:**
-- **Factory Pattern** — `LLMClientFactory` creates configured clients
-- **Strategy Pattern** — `ProviderAdapter` allows switching LLMs
-- **Adapter Pattern** — Translates between provider-specific formats
-- **Builder Pattern** — `LLMRequest.builder()` for flexible request building
+**Design Patterns Used:**
+- **Factory Pattern** — `LLMClientFactory` creates pre-configured clients
+- **Builder Pattern** — `LLMClient.builder()` for fluent configuration
+- **Strategy Pattern** — `ProviderAdapter` for pluggable LLM backends
+- **Async/Await** — `CompletableFuture` for non-blocking operations
+- **Retry Pattern** — Configurable exponential backoff for tool execution
+
+---
+
+## API Reference
+
+### Factory Methods
+
+```java
+// Local providers (no API key)
+LLMClient.ollama("model")
+LLMClient.ollama("http://host:11434", "model")
+LLMClient.lmStudio("model")
+LLMClient.vllm("model")
+LLMClient.jan("model")
+
+// Cloud providers (API key required)
+LLMClient.openAI("gpt-4o", "sk-...")
+LLMClient.claude("claude-3-5-sonnet", "sk-ant-...")
+LLMClient.deepSeek("deepseek-chat", "sk-...")
+LLMClient.nvidia("meta/llama-3.1-70b", "nv-...")
+LLMClient.openRouter("anthropic/claude-3.5-sonnet", "sk-or-...")
+LLMClient.groq("llama-3.1-70b-versatile", "key")
+LLMClient.mistral("mistral-large-latest", "key")
+```
+
+### Client Methods
+
+| Method | Description |
+|--------|-------------|
+| `chat(String)` | Send message, get text response (blocking) |
+| `chat(String, Map<String,String>)` | With options (system, temperature) |
+| `chat(Message)` | Send structured message |
+| `chatAsync(String)` | Async version returning CompletableFuture |
+| `streamChat(String, Consumer)` | Stream tokens to consumer (non-blocking) |
+| `registerTool(...)` | Register a function for LLM to call |
+| `withRetry(RetryConfig)` | Configure retry behavior |
+| `getHistory()` | Get ConversationHistory |
+| `clearHistory()` | Clear conversation history |
+
+### RetryConfig
+
+```java
+RetryConfig defaults = RetryConfig.defaults();  // 3 attempts, 500ms initial
+
+RetryConfig custom = new RetryConfig(
+    5,                    // maxAttempts
+    Duration.ofMillis, // initialDelay
+    2.0,                  // backoffMultiplier
+    Duration.ofSeconds(30)   // maxDelay
+);
+```
+
+---
+
+## Supported Providers
+
+### Local (Free, Privacy-First)
+
+| Provider | Default URL | Best For |
+|----------|-------------|----------|
+| **Ollama** | `localhost:11434` | General purpose |
+| **LM Studio** | `localhost:1234` | Desktop GPU |
+| **vLLM** | `localhost:8000` | High throughput |
+| **Jan** | `localhost:1337` | Local-first |
+
+### Cloud (API Key Required)
+
+| Provider | Base URL | Notable Models |
+|----------|----------|----------------|
+| **OpenAI** | `api.openai.com` | GPT-4o, o1 |
+| **Claude** | `api.anthropic.com` | Claude 3.5 Sonnet |
+| **DeepSeek** | `api.deepseek.com` | DeepSeek Coder, V3 |
+| **NVIDIA NIM** | `integrate.api.nvidia.com` | Llama 3.1 |
+| **OpenRouter** | `openrouter.ai` | 100+ models |
+| **Mistral** | `api.mistral.ai` | Mixtral, Codestral |
+| **Groq** | `api.groq.com` | Fast Llama |
 
 ---
 
@@ -388,108 +358,111 @@ client.registerTool(
 
 ```
 src/main/java/in/simpletools/llm/framework/
-├── LLMFramework.java           # Fluent DSL entry point
 ├── client/
-│   ├── LLMClient.java          # Main client class
-│   └── LLMClientFactory.java   # Factory for creating clients
+│   ├── LLMClient.java              # Main client with async support
+│   └── LLMClientFactory.java        # Static factory methods
 ├── config/
-│   ├── Provider.java           # Enum: all supported providers
-│   └── ClientConfig.java       # Builder for client configuration
+│   ├── Provider.java               # Enum for all providers
+│   └── ClientConfig.java           # Configuration builder
 ├── model/
-│   ├── Message.java            # Chat message (user/assistant/system)
-│   ├── LLMRequest.java         # Request builder
-│   ├── LLMResponse.java        # Response object
-│   ├── Tool.java               # Tool definition for function calling
-│   └── ToolCall.java          # Tool invocation from LLM
+│   ├── Message.java                # Chat messages
+│   ├── LLMRequest.java             # Request builder
+│   ├── LLMResponse.java            # Response object
+│   ├── Tool.java                   # Tool definitions
+│   └── ToolCall.java              # Tool invocation
 ├── adapter/
-│   ├── ProviderAdapter.java   # Interface for all adapters
-│   ├── OpenAIAdapter.java      # OpenAI-compatible API
-│   ├── OllamaAdapter.java      # Ollama-specific API
-│   └── ClaudeAdapter.java      # Anthropic Claude API
+│   ├── ProviderAdapter.java        # Adapter interface
+│   ├── OllamaAdapter.java          # Ollama implementation
+│   ├── OpenAIAdapter.java          # OpenAI-compatible
+│   └── ClaudeAdapter.java          # Claude API
 ├── tool/
-│   ├── ToolRegistry.java       # Manages registered tools
-│   └── ToolParam.java          # Parameter definitions
+│   ├── ToolRegistry.java           # Tool management
+│   └── ToolParam.java             # Parameter definitions
 └── history/
-    └── ConversationHistory.java  # Message history management
+    └── ConversationHistory.java     # Message history
 ```
 
 ---
 
 ## Environment Setup
 
-### Ollama (Local)
+### Ollama (Local - Recommended for Development)
 
 ```bash
-# Install Ollama
+# Install
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull a model
+# Pull model
 ollama pull gemma4:latest
 
-# Run (automatically starts server on localhost:11434)
-ollama run gemma4:latest
+# Run server
+ollama serve  # Runs on localhost:11434
 ```
 
 ### API Keys
 
-Set as environment variables:
 ```bash
 export OPENAI_API_KEY=sk-your-key-here
 export ANTHROPIC_API_KEY=sk-ant-your-key-here
 export DEEPSEEK_API_KEY=sk-your-key-here
-export GROQ_API_KEY=gsk_your-key-here
-```
-
-Or pass directly:
-```java
-LLMClient client = LLMClientFactory.openAI("gpt-4o", System.getenv("OPENAI_API_KEY"));
 ```
 
 ---
 
-## Build & Development
+## Build & Run
 
 ```bash
-# Build the project
+# Build project
 gradle build
 
-# Run the example
+# Run demo
 gradle run
 
-# Run tests
-gradle test
-
-# Clean build artifacts
+# Clean
 gradle clean
 ```
+
+---
+
+## Performance Features
+
+### Async Operations
+```java
+// Non-blocking chat
+CompletableFuture<String> future = client.chatAsync("Generate report");
+
+// Process multiple requests in parallel
+List<CompletableFuture<String>> requests = List.of(
+    client.chatAsync("Task 1"),
+    client.chatAsync("Task 2"),
+    client.chatAsync("Task 3")
+);
+
+CompletableFuture.allOf(requests.toArray(new CompletableFuture[0]))
+    .thenAccept(v -> System.out.println("All done!"));
+```
+
+### Thread-Safe Tool Execution
+- Tools execute in parallel using cached thread pool
+- Automatic retry with exponential backoff
+- Configurable max attempts and delays
 
 ---
 
 ## Troubleshooting
 
 ### Connection Refused (Local Providers)
-
 1. Ensure Ollama/LM Studio is running
-2. Check the URL matches your setup
-3. For Ollama: `ollama serve` to start the API server
+2. Check URL: `ollama serve` or custom host
 
-### 401 Unauthorized (Cloud Providers)
-
-1. Verify your API key is valid
+### 401 Unauthorized (Cloud)
+1. Verify API key is valid
 2. Check key has required permissions
-3. Ensure provider URL is correct
 
 ### Tool Not Being Called
-
-1. Ensure tool description is clear and detailed
-2. Check parameter types match expected values
-3. Some models don't support function calling (use gpt-4, claude-3, llama3)
-
----
-
-## Contributing
-
-Contributions welcome! Please read the code style and submit PRs.
+1. Ensure tool description is clear
+2. Check parameter types match
+3. Some models don't support function calling
 
 ---
 
