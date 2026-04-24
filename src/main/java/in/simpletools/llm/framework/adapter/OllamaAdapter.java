@@ -119,7 +119,28 @@ public class OllamaAdapter implements ProviderAdapter {
         if (data.get("total_duration") != null)
             resp.setTotalDuration(((Number) data.get("total_duration")).longValue());
         Object msg = data.get("message");
-        if (msg instanceof Map) resp.setMessage(Message.fromMap((Map<String, Object>) msg));
+        if (msg instanceof Map) {
+            Map<String, Object> msgMap = (Map<String, Object>) msg;
+            Message message = Message.fromMap(msgMap);
+
+            // Check for tool calls and set them on message
+            if (msgMap.get("tool_calls") != null) {
+                List<ToolCall> toolCalls = new ArrayList<>();
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> toolCallsRaw = (List<Map<String, Object>>) msgMap.get("tool_calls");
+                for (Map<String, Object> tc : toolCallsRaw) {
+                    ToolCall toolCall = new ToolCall();
+                    ToolCall.Function fn = new ToolCall.Function();
+                    Map<String, Object> fnMap = (Map<String, Object>) tc.get("function");
+                    fn.setName((String) fnMap.get("name"));
+                    fn.setArguments((Map<String, Object>) fnMap.get("arguments"));
+                    toolCall.setFunction(fn);
+                    toolCalls.add(toolCall);
+                }
+                message.setToolCalls(toolCalls);
+            }
+            resp.setMessage(message);
+        }
         return resp;
     }
 

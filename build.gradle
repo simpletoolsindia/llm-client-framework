@@ -30,7 +30,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'in.simpletools.llm.framework.LLMFramework'
+    mainClass = 'in.simpletools.llm.framework.example.OllamaDemo'
 }
 
 tasks.named('test') { useJUnit() }
