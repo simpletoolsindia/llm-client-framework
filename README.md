@@ -3,6 +3,7 @@
 A unified, lightweight Java framework for interacting with multiple Large Language Model (LLM) providers through a single, consistent API. Built with clean architecture, factory patterns, and SOLID principles.
 
 [![Java](https://img.shields.io/badge/Java-21+-blue.svg)](https://adoptium.net/)
+[![Maven Central](https://img.shields.io/maven-central/v/com.simpletoolsindia/llm-client-framework.svg)](https://search.maven.org/artifact/com.simpletoolsindia/llm-client-framework)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -46,22 +47,32 @@ A unified, lightweight Java framework for interacting with multiple Large Langua
 
 ## Installation
 
-### 1. Clone the Repository
+### Maven Central (Recommended)
+
+```xml
+<dependency>
+    <groupId>com.simpletoolsindia</groupId>
+    <artifactId>llm-client-framework</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+```groovy
+// Gradle
+implementation 'com.simpletoolsindia:llm-client-framework:1.0.0'
+```
+
+```kotlin
+// Kotlin DSL
+implementation("com.simpletoolsindia:llm-client-framework:1.0.0")
+```
+
+### Gradle / Clone
 
 ```bash
 git clone https://github.com/simpletoolsindia/llm-client-framework.git
 cd llm-client-framework
-```
-
-### 2. Build
-
-```bash
 gradle build
-```
-
-### 3. Run Examples
-
-```bash
 gradle run
 ```
 
@@ -518,6 +529,51 @@ dependencies {
 
 ---
 
+## Publishing to Maven Central
+
+### Prerequisites
+
+1. **Sonatype OSSRH Account** - [Sign up here](https://central.sonatype.org/register/)
+2. **GPG Key** - [Generate GPG key](https://central.sonatype.org/publish/gpg/)
+3. **Environment Variables**:
+   ```bash
+   export OSSRH_USERNAME=your-sonatype-username
+   export OSSRH_PASSWORD=your-sonatype-password
+   export GPG_PASSPHRASE=your-gpg-passphrase
+   ```
+
+### Publishing Commands
+
+```bash
+# Build and test
+gradle build
+
+# Publish snapshot version (testing)
+gradle publishToSnapshot
+
+# Publish release version (requires signing)
+gradle publishToRelease
+
+# Or directly:
+gradle publish
+```
+
+### Gradle Properties (for signing)
+
+Add to `~/.gradle/gradle.properties`:
+```properties
+signing.keyId=YOUR_KEY_ID
+signing.password=YOUR_GPG_PASSPHRASE
+signing.secretKeyRingFile=/path/to/secring.gpg
+```
+
+### After Publishing
+
+- Snapshot versions appear on Maven Central within ~15 minutes
+- Release versions require manual promotion via [Sonatype Nexus](https://s01.oss.sonatype.org/)
+
+---
+
 ## Contributing
 
 1. Fork the repository
@@ -537,6 +593,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Links
 
 - [GitHub Repository](https://github.com/simpletoolsindia/llm-client-framework)
+- [Maven Central](https://search.maven.org/artifact/com.simpletoolsindia/llm-client-framework)
 - [Report Issues](https://github.com/simpletoolsindia/llm-client-framework/issues)
 - [Ollama](https://ollama.com/)
 - [OpenAI API](https://platform.openai.com/)
