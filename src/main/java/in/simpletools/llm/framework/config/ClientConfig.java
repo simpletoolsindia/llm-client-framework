@@ -12,6 +12,8 @@ public class ClientConfig {
     private Double presencePenalty;
     private String[] stopSequences;
     private Double timeout;
+    private int connectTimeoutMs = 30_000;   // 30 seconds default
+    private int readTimeoutMs = 60_000;      // 60 seconds default
     private boolean stream = true;
 
     public ClientConfig() {}
@@ -55,6 +57,19 @@ public class ClientConfig {
 
     public Double getTimeout() { return timeout; }
     public ClientConfig timeout(Double seconds) { this.timeout = seconds; return this; }
+
+    public int getConnectTimeoutMs() { return connectTimeoutMs; }
+    public ClientConfig connectTimeoutMs(int ms) { this.connectTimeoutMs = ms; return this; }
+
+    public int getReadTimeoutMs() { return readTimeoutMs; }
+    public ClientConfig readTimeoutMs(int ms) { this.readTimeoutMs = ms; return this; }
+
+    /** Convenience: set both connect and read timeout at once (in seconds). */
+    public ClientConfig timeoutSeconds(int seconds) {
+        this.connectTimeoutMs = seconds * 1000;
+        this.readTimeoutMs = seconds * 1000;
+        return this;
+    }
 
     public boolean isStream() { return stream; }
     public ClientConfig stream(boolean s) { this.stream = s; return this; }

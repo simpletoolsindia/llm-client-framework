@@ -2,7 +2,6 @@ package in.simpletools.llm.framework.history;
 
 import in.simpletools.llm.framework.model.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tracks token usage and context window for the current conversation.

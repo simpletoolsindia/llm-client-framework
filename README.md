@@ -17,6 +17,8 @@ A high-performance, unified Java framework for interacting with **12+ LLM provid
 - **Token Tracking** — Know your context usage at any time with `client.getContextInfo()`
 - **Redis History** — Persistent multi-session conversations with Redis backend
 - **Built-in System Tools** — File, web search, bash commands — cross-platform (Win/Mac/Linux)
+- **HTTP Client Tools** — Call external REST APIs (GET, POST, PUT, PATCH, DELETE)
+- **Request Timeout Config** — Set connect/read timeouts per client
 - **Async/Await** — CompletableFuture-based async chat for high performance
 - **Streaming** — Real-time token-by-token responses
 - **Logging** — Built-in `SimpleLogger` (no external deps)
@@ -323,6 +325,46 @@ public class SystemToolsExample {
 }
 ```
 
+### Example 4b: HTTP Tools (Call External APIs)
+
+```java
+public class HttpToolsExample {
+    public static void main(String[] args) {
+        LLMClient client = LLMClient.ollama("gemma4:latest");
+
+        // Register HTTP client tools for external API calls
+        client.withHttpTools();
+
+        // Now the LLM can call any REST API!
+
+        // Example 1: GET request (fetch data)
+        String users = client.chat(
+            "GET https://jsonplaceholder.typicode.com/users/1 and tell me the user's name"
+        );
+
+        // Example 2: POST request (create data)
+        String created = client.chat(
+            "POST to https://jsonplaceholder.typicode.com/posts with body {\"title\":\"Test\",\"body\":\"Content\"} and show the response"
+        );
+
+        // Example 3: DELETE request
+        String deleted = client.chat(
+            "DELETE https://jsonplaceholder.typicode.com/posts/1 and tell me the result"
+        );
+
+        // Example 4: With custom headers (auth)
+        String auth = client.chat(
+            "GET https://api.example.com/protected resource with header Authorization:Bearer my-token"
+        );
+
+        // Example 5: Chain multiple API calls
+        String chain = client.chat(
+            "GET https://jsonplaceholder.typicode.com/users/1 to get user data, then GET the user's posts"
+        );
+    }
+}
+```
+
 ### Example 5: Async & Streaming
 
 ```java
@@ -567,6 +609,7 @@ public class FullFeatured {
 | `tool(name, desc, handler, params)` | Register with param types |
 | `registerTools(Object)` | Auto-register all @LLMTool methods |
 | `withSystemTools()` | Register built-in file/web/bash tools |
+| `withHttpTools()` | Register HTTP client tools (GET, POST, PUT, PATCH, DELETE) |
 | `withRedisHistory(id)` | Use Redis for conversation history |
 | `withMemoryHistory()` | Default in-memory history |
 | `getContextInfo()` | Get token usage & context window |
@@ -620,6 +663,39 @@ Enable with: `client.withSystemTools()`
 | `web_search` | `query`, `limit` | Search the web |
 | `fetch_webpage` | `url`, `max_length` | Fetch webpage content |
 | `run_bash` | `command`, `cwd` | Execute shell command |
+
+### HTTP Client Tools (External API Calls)
+
+Enable with: `client.withHttpTools()`
+
+| Tool | Args | Description |
+|------|------|-------------|
+| `http_get` | `url`, `headers`, `params` | Fetch data from any REST API |
+| `http_post` | `url`, `headers`, `body` | Create a new resource |
+| `http_put` | `url`, `headers`, `body` | Replace a resource entirely |
+| `http_patch` | `url`, `headers`, `body` | Partially update a resource |
+| `http_delete` | `url`, `headers` | Delete a resource |
+
+**Features:**
+- Configurable timeout (30s connect, 60s read)
+- Custom headers (Auth, Content-Type, etc.)
+- JSON body support with auto content-type
+- Query parameters for GET/DELETE
+- Returns: `{"status":200,"body":"...","contentType":"application/json","responseTimeMs":45}`
+
+### Request Timeout Configuration
+
+```java
+// Set connection timeout (default 30s)
+LLMClient client = LLMClient.ollama("gemma4")
+    .config(ClientConfig.of(Provider.OLLAMA).model("gemma4").connectTimeoutMs(10_000));
+
+// Set read timeout (default 60s)
+client.config(new ClientConfig().readTimeoutMs(30_000));
+
+// Set both at once
+client.config(new ClientConfig().timeoutSeconds(15));
+```
 
 ---
 
@@ -684,7 +760,8 @@ src/main/java/in/simpletools/llm/framework/
 │   ├── RedisHistory.java       # Redis-backed
 │   └── TokenTracker.java      # Token tracking
 ├── tools/
-│   └── SystemTools.java        # Built-in tools
+│   ├── SystemTools.java        # Built-in file/web/shell tools
+│   └── HttpTools.java          # HTTP client tools for REST API calls
 └── utils/
     └── SimpleLogger.java      # Built-in logger
 ```

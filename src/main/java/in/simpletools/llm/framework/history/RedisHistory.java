@@ -1,9 +1,9 @@
 package in.simpletools.llm.framework.history;
 
 import in.simpletools.llm.framework.model.Message;
+import in.simpletools.llm.framework.utils.SimpleLogger;
 import com.google.gson.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Redis-backed conversation history for persistent, multi-session memory.
@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
  * </pre>
  */
 public class RedisHistory implements ConversationHistoryStore {
+    private static final SimpleLogger log = SimpleLogger.get("RedisHistory");
     private final String redisHost;
     private final int redisPort;
     private final String conversationId;
@@ -186,7 +187,7 @@ public class RedisHistory implements ConversationHistoryStore {
                 jedis.setex(metaKey, ttlHours * 3600L, gson.toJson(metadata));
             }
         } catch (Exception e) {
-            System.err.println("RedisHistory: Failed to save - " + e.getMessage());
+            log.error("Failed to save conversation to Redis: {}", e.getMessage());
         }
     }
 
@@ -213,7 +214,7 @@ public class RedisHistory implements ConversationHistoryStore {
                 m.forEach((k, v) -> metadata.put(k.toString(), v.toString()));
             }
         } catch (Exception e) {
-            System.err.println("RedisHistory: Failed to load - " + e.getMessage());
+            log.error("Failed to load conversation from Redis: {}", e.getMessage());
         }
     }
 
@@ -287,7 +288,7 @@ public class RedisHistory implements ConversationHistoryStore {
             messages.clear();
             messages.addAll(Arrays.asList(arr));
         } catch (Exception e) {
-            System.err.println("RedisHistory: Import failed - " + e.getMessage());
+            log.error("Failed to import conversation from JSON: {}", e.getMessage());
         }
     }
 }

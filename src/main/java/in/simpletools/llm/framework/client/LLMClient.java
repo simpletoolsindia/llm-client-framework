@@ -231,6 +231,33 @@ public class LLMClient {
         return this;
     }
 
+    /**
+     * Register HTTP client tools for calling external REST APIs.
+     * Adds: http_get, http_post, http_put, http_patch, http_delete
+     *
+     * <pre>
+     * {@code
+     * client.withHttpTools();
+     * // Now the LLM can call external APIs like:
+     * // "GET https://api.example.com/users"
+     * // "POST https://api.example.com/users with body {"name":"John"}"
+     * }
+     * </pre>
+     */
+    public LLMClient withHttpTools() {
+        in.simpletools.llm.framework.tools.HttpTools.registerAll(toolRegistry);
+        toolRegistry.getAllTools().stream()
+            .filter(ti -> ti.getName().startsWith("http_"))
+            .forEach(ti -> {
+                if (tools.stream().noneMatch(t -> t.getFunction().getName().equals(ti.getName()))) {
+                    tools.add(toolFromInfo(ti));
+                }
+            });
+        int httpCount = (int) toolRegistry.getAllTools().stream().filter(ti -> ti.getName().startsWith("http_")).count();
+        logger.info("Registered {} HTTP tools", httpCount);
+        return this;
+    }
+
     // ========== Synchronous Chat ==========
     public String chat(String message) { return chat(message, Map.of()); }
 
