@@ -1,13 +1,10 @@
-package com.simpletoolsindia.llm.framework.config;
+package in.simpletools.llm.framework.config;
 
 public enum Provider {
-    // Local Providers
     OLLAMA("http://localhost:11434", "v1", false),
     LM_STUDIO("http://localhost:1234/v1", "v1", false),
     VLLM("http://localhost:8000/v1", "v1", false),
     JAN("http://localhost:1337/v1", "v1", false),
-
-    // Cloud Providers
     OPENAI("https://api.openai.com/v1", "v1", true),
     DEEPSEEK("https://api.deepseek.com/v1", "v1", true),
     NVIDIA("https://integrate.api.nvidia.com/v1", "v1", true),
@@ -15,8 +12,6 @@ public enum Provider {
     GROQ("https://api.groq.com/openai/v1", "v1", true),
     MISTRAL("https://api.mistral.ai/v1", "v1", true),
     ANTHROPIC("https://api.anthropic.com/v1", "v1", true),
-
-    // Custom
     CUSTOM("", "v1", true);
 
     private final String defaultBaseUrl;
@@ -34,11 +29,7 @@ public enum Provider {
     public boolean requiresApiKey() { return requiresApiKey; }
     public boolean isCloud() { return requiresApiKey && !defaultBaseUrl.contains("localhost"); }
     public boolean isLocal() { return !requiresApiKey || defaultBaseUrl.contains("localhost"); }
-
-    public boolean supportsTools() {
-        return this != ANTHROPIC; // Claude uses different tool format
-    }
-
+    public boolean supportsTools() { return this != ANTHROPIC; }
     public boolean supportsVision() {
         return this == OPENAI || this == OLLAMA || this == ANTHROPIC ||
                this == DEEPSEEK || this == NVIDIA || this == OPENROUTER;

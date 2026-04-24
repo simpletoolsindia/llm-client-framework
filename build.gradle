@@ -4,7 +4,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'com.simpletoolsindia'
+group = 'in.simpletools'
 version = '1.0.0'
 
 java {
@@ -30,7 +30,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'com.simpletoolsindia.llm.framework.LLMFramework'
+    mainClass = 'in.simpletools.llm.framework.LLMFramework'
 }
 
 tasks.named('test') { useJUnit() }
@@ -45,7 +45,7 @@ publishing {
         mavenJava(MavenPublication) {
             from components.java
 
-            groupId 'com.simpletoolsindia'
+            groupId 'in.simpletools'
             artifactId 'llm-client-framework'
             version version
 
@@ -100,6 +100,15 @@ publishing {
             credentials {
                 username = sonatypeUsername
                 password = sonatypePassword
+            }
+        }
+
+        maven {
+            name = 'GitHubPackages'
+            url = 'https://maven.pkg.github.com/simpletoolsindia/llm-client-framework'
+            credentials {
+                username = project.findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR') ?: ''
+                password = project.findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN') ?: ''
             }
         }
     }

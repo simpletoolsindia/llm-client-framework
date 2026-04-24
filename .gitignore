@@ -1,6 +1,8 @@
 # Build output
 build/
+# Gradle
 .gradle/
+gradle.properties
 
 # IDE
 .idea/

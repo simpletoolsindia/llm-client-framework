@@ -1,4 +1,4 @@
-package com.simpletoolsindia.llm.framework.config;
+package in.simpletools.llm.framework.config;
 
 public class ClientConfig {
     private Provider provider;
@@ -63,20 +63,16 @@ public class ClientConfig {
         return provider(Provider.OLLAMA).baseUrl(baseUrl).model(model);
     }
 
-    public ClientConfig lmStudio(String model) {
-        return provider(Provider.LM_STUDIO).model(model);
-    }
-
     public ClientConfig openAI(String model, String apiKey) {
         return provider(Provider.OPENAI).model(model).apiKey(apiKey);
     }
 
-    public ClientConfig deepSeek(String model, String apiKey) {
-        return provider(Provider.DEEPSEEK).model(model).apiKey(apiKey);
-    }
-
     public ClientConfig claude(String model, String apiKey) {
         return provider(Provider.ANTHROPIC).model(model).apiKey(apiKey);
+    }
+
+    public ClientConfig deepSeek(String model, String apiKey) {
+        return provider(Provider.DEEPSEEK).model(model).apiKey(apiKey);
     }
 
     public ClientConfig nvidia(String model, String apiKey) {
@@ -85,6 +81,10 @@ public class ClientConfig {
 
     public ClientConfig openRouter(String model, String apiKey) {
         return provider(Provider.OPENROUTER).model(model).apiKey(apiKey);
+    }
+
+    public ClientConfig lmStudio(String model) {
+        return provider(Provider.LM_STUDIO).model(model);
     }
 
     public ClientConfig vllm(String model) {

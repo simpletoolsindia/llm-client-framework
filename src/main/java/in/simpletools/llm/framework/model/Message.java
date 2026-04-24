@@ -1,4 +1,4 @@
-package com.simpletoolsindia.llm.framework.model;
+package in.simpletools.llm.framework.model;
 
 import java.util.*;
 
@@ -99,20 +99,6 @@ public class Message {
         msg.setRole(Role.valueOf((String) m.get("role")));
         msg.setContent((String) m.get("content"));
         msg.setName((String) m.get("name"));
-        Object content = m.get("content");
-        if (content instanceof List) {
-            msg.setContentParts(new ArrayList<>());
-            for (Object p : (List<?>) content) {
-                if (p instanceof Map) {
-                    Map<String, Object> pm = (Map<String, Object>) p;
-                    ContentPart part = new ContentPart();
-                    part.type = (String) pm.get("type");
-                    Object txt = pm.get("text");
-                    if (txt != null) part.text = txt.toString();
-                    msg.getContentParts().add(part);
-                }
-            }
-        }
         Object calls = m.get("tool_calls");
         if (calls instanceof List) {
             List<ToolCall> toolCalls = new ArrayList<>();

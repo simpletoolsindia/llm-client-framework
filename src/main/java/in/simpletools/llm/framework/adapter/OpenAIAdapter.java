@@ -1,9 +1,8 @@
-package com.simpletoolsindia.llm.framework.adapter;
+package in.simpletools.llm.framework.adapter;
 
-import com.simpletoolsindia.llm.framework.config.ClientConfig;
-import com.simpletoolsindia.llm.framework.model.*;
+import in.simpletools.llm.framework.config.ClientConfig;
+import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
-
 import java.net.http.*;
 import java.net.URI;
 import java.time.Duration;
@@ -17,17 +16,13 @@ public class OpenAIAdapter implements ProviderAdapter {
 
     public OpenAIAdapter(ClientConfig config) {
         this.config = config;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
     }
 
     @Override
     public LLMResponse chat(LLMRequest request) {
         try {
-            Map<String, Object> reqMap = request.toMap();
-            String json = gson.toJson(reqMap);
-
+            String json = gson.toJson(request.toMap());
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(config.getBaseUrl() + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -38,7 +33,6 @@ public class OpenAIAdapter implements ProviderAdapter {
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) throw new RuntimeException("API error: " + resp.body());
-
             @SuppressWarnings("unchecked")
             Map<String, Object> data = gson.fromJson(resp.body(), Map.class);
             return fromProviderFormat(data);
@@ -63,8 +57,6 @@ public class OpenAIAdapter implements ProviderAdapter {
                 .build();
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) throw new RuntimeException("API error");
-
             for (String line : resp.body().split("\n")) {
                 if (line.startsWith("data: ")) {
                     String data = line.substring(6);
@@ -74,9 +66,7 @@ public class OpenAIAdapter implements ProviderAdapter {
                     parseChunk(chunk, onChunk);
                 }
             }
-        } catch (Exception e) {
-            onChunk.accept("Error: " + e.getMessage());
-        }
+        } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
     }
 
     protected void parseChunk(Map<String, Object> chunk, Consumer<String> onChunk) {
@@ -95,56 +85,36 @@ public class OpenAIAdapter implements ProviderAdapter {
     @Override
     public String generate(String prompt) {
         try {
-            Map<String, Object> req = Map.of(
-                "model", config.getModel(),
-                "prompt", prompt,
-                "max_tokens", 1000
-            );
+            Map<String, Object> req = Map.of("model", config.getModel(), "prompt", prompt, "max_tokens", 1000);
             String json = gson.toJson(req);
-
             HttpRequest httpReq = HttpRequest.newBuilder()
                 .uri(URI.create(config.getBaseUrl() + "/completions"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + config.getApiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
-
             HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
             @SuppressWarnings("unchecked")
             Map<String, Object> data = gson.fromJson(resp.body(), Map.class);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
             return choices != null ? (String) choices.get(0).get("text") : "";
-        } catch (Exception e) {
-            return "Error: " + e.getMessage();
-        }
+        } catch (Exception e) { return "Error: " + e.getMessage(); }
     }
 
     @Override
     public boolean isAvailable() {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(config.getBaseUrl()))
-                .GET().build();
-            httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            httpClient.send(HttpRequest.newBuilder().uri(URI.create(config.getBaseUrl())).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
             return true;
         } catch (Exception e) { return false; }
-    }
-
-    @Override
-    public Map<String, String> getHeaders() {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Authorization", "Bearer " + config.getApiKey());
-        return headers;
     }
 
     @Override
     public LLMResponse fromProviderFormat(Map<String, Object> data) {
         LLMResponse resp = new LLMResponse();
         resp.setModel((String) data.get("model"));
-        resp.setId((String) data.get("id"));
-        resp.setObject((String) data.get("object"));
-
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
         if (choices != null && !choices.isEmpty()) {
@@ -154,27 +124,13 @@ public class OpenAIAdapter implements ProviderAdapter {
             Map<String, Object> msgMap = (Map<String, Object>) choice.get("message");
             if (msgMap != null) resp.setMessage(Message.fromMap(msgMap));
         }
-
-        Object usage = data.get("usage");
-        if (usage instanceof Map) {
-            LLMResponse.Usage u = new LLMResponse.Usage();
-            Map<String, Object> um = (Map<String, Object>) usage;
-            u.setPromptTokens(numInt(um.get("prompt_tokens")));
-            u.setCompletionTokens(numInt(um.get("completion_tokens")));
-            u.setTotalTokens(numInt(um.get("total_tokens")));
-            resp.setUsage(u);
-        }
-
         resp.setDone(true);
         return resp;
     }
 
-    private int numInt(Object v) { return v instanceof Number ? ((Number) v).intValue() : 0; }
-
     protected LLMResponse createErrorResponse(String error) {
         LLMResponse resp = new LLMResponse();
-        Message msg = new Message(Message.Role.assistant, "Error: " + error);
-        resp.setMessage(msg);
+        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
         return resp;
     }
 }

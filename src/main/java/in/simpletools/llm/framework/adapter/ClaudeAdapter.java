@@ -1,6 +1,6 @@
-package com.simpletoolsindia.llm.framework.adapter;
+package in.simpletools.llm.framework.adapter;
 
-import com.simpletoolsindia.llm.framework.model.*;
+import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
 import java.net.http.*;
 import java.net.URI;
@@ -19,9 +19,7 @@ public class ClaudeAdapter implements ProviderAdapter {
         this.baseUrl = baseUrl;
         this.model = model;
         this.apiKey = apiKey;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
     }
 
     @Override
@@ -41,15 +39,11 @@ public class ClaudeAdapter implements ProviderAdapter {
                 .build();
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200)
-                throw new RuntimeException("Claude API error: " + resp.body());
-
+            if (resp.statusCode() != 200) throw new RuntimeException("Claude API error: " + resp.body());
             @SuppressWarnings("unchecked")
             Map<String, Object> data = gson.fromJson(resp.body(), Map.class);
             return fromClaudeFormat(data);
-        } catch (Exception e) {
-            return createErrorResponse(e.getMessage());
-        }
+        } catch (Exception e) { return createErrorResponse(e.getMessage()); }
     }
 
     @Override
@@ -70,37 +64,26 @@ public class ClaudeAdapter implements ProviderAdapter {
                 .build();
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200)
-                throw new RuntimeException("Claude API error");
-
             for (String line : resp.body().split("\n")) {
                 if (line.startsWith("data: ")) {
-                    String data = line.substring(6);
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> chunk = gson.fromJson(data, Map.class);
+                    Map<String, Object> chunk = gson.fromJson(line.substring(6), Map.class);
                     parseChunk(chunk, onChunk);
                 }
             }
-        } catch (Exception e) {
-            onChunk.accept("Error: " + e.getMessage());
-        }
+        } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
     }
 
     @Override
     public String generate(String prompt) {
-        return chat(LLMRequest.builder()
-            .model(model)
-            .addMessage(Message.ofUser(prompt))
-            .build()).getContentOrEmpty();
+        return chat(LLMRequest.builder().model(model).addMessage(Message.ofUser(prompt)).build()).getContentOrEmpty();
     }
 
     @Override
     public boolean isAvailable() {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl.replace("/v1", "")))
-                .GET().build();
-            httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            httpClient.send(HttpRequest.newBuilder().uri(URI.create(baseUrl.replace("/v1", ""))).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
             return true;
         } catch (Exception e) { return false; }
     }
@@ -109,16 +92,12 @@ public class ClaudeAdapter implements ProviderAdapter {
         Map<String, Object> m = new HashMap<>();
         m.put("model", model);
         m.put("max_tokens", request.getMaxTokens() != null ? request.getMaxTokens() : 1024);
-
-        if (request.getTemperature() != null)
-            m.put("temperature", request.getTemperature());
-
+        if (request.getTemperature() != null) m.put("temperature", request.getTemperature());
         List<Map<String, Object>> msgs = new ArrayList<>();
         if (request.getMessages() != null) {
             for (Message msg : request.getMessages()) {
-                if (msg.getRole() == Message.Role.system) {
-                    m.put("system", msg.getContent());
-                } else {
+                if (msg.getRole() == Message.Role.system) m.put("system", msg.getContent());
+                else {
                     Map<String, Object> msgMap = new HashMap<>();
                     msgMap.put("role", msg.getRole().name());
                     msgMap.put("content", msg.getContent());
@@ -127,23 +106,6 @@ public class ClaudeAdapter implements ProviderAdapter {
             }
         }
         m.put("messages", msgs);
-
-        if (request.getTools() != null && !request.getTools().isEmpty()) {
-            List<Map<String, Object>> tools = new ArrayList<>();
-            for (Tool tool : request.getTools()) {
-                Map<String, Object> t = new HashMap<>();
-                Map<String, Object> inp = new HashMap<>();
-                inp.put("name", tool.getFunction().getName());
-                inp.put("description", tool.getFunction().getDescription());
-                inp.put("input_schema", tool.getFunction().toMap());
-                t.put("name", tool.getFunction().getName());
-                t.put("description", tool.getFunction().getDescription());
-                t.put("input_schema", tool.getFunction().toMap());
-                tools.add(t);
-            }
-            m.put("tools", tools);
-        }
-
         return m;
     }
 
@@ -151,39 +113,23 @@ public class ClaudeAdapter implements ProviderAdapter {
         LLMResponse resp = new LLMResponse();
         resp.setModel(model);
         resp.setDone(true);
-
         Object stop = data.get("stop_reason");
         if (stop != null) resp.setFinishReason(stop.toString());
-
         Object content = data.get("content");
         if (content instanceof List) {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> blocks = (List<Map<String, Object>>) content;
             for (Map<String, Object> block : blocks) {
-                String type = (String) block.get("type");
-                if ("text".equals(type)) {
-                    Message msg = new Message(Message.Role.assistant,
-                        (String) block.get("text"));
-                    resp.setMessage(msg);
+                if ("text".equals(block.get("type"))) {
+                    resp.setMessage(new Message(Message.Role.assistant, (String) block.get("text")));
                 }
             }
         }
-
-        Object usage = data.get("usage");
-        if (usage instanceof Map) {
-            LLMResponse.Usage u = new LLMResponse.Usage();
-            Map<String, Object> um = (Map<String, Object>) usage;
-            u.setInputTokens(numInt(um.get("input_tokens")));
-            u.setOutputTokens(numInt(um.get("output_tokens")));
-            resp.setUsage(u);
-        }
-
         return resp;
     }
 
     private void parseChunk(Map<String, Object> chunk, Consumer<String> onChunk) {
-        String type = (String) chunk.get("type");
-        if ("content_block_delta".equals(type)) {
+        if ("content_block_delta".equals(chunk.get("type"))) {
             Object delta = chunk.get("delta");
             if (delta instanceof Map) {
                 Object text = ((Map<?, ?>) delta).get("text");
@@ -192,12 +138,9 @@ public class ClaudeAdapter implements ProviderAdapter {
         }
     }
 
-    private int numInt(Object v) { return v instanceof Number ? ((Number) v).intValue() : 0; }
-
     private LLMResponse createErrorResponse(String error) {
         LLMResponse resp = new LLMResponse();
-        Message msg = new Message(Message.Role.assistant, "Error: " + error);
-        resp.setMessage(msg);
+        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
         return resp;
     }
 }

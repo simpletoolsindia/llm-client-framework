@@ -1,4 +1,4 @@
-package com.simpletoolsindia.llm.framework.tool;
+package in.simpletools.llm.framework.tool;
 
 import java.lang.annotation.*;
 

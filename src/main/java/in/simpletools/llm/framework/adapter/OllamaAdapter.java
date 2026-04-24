@@ -1,9 +1,7 @@
-package com.simpletoolsindia.llm.framework.adapter;
+package in.simpletools.llm.framework.adapter;
 
-import com.simpletoolsindia.llm.framework.config.Provider;
-import com.simpletoolsindia.llm.framework.model.*;
+import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
-
 import java.net.http.*;
 import java.net.URI;
 import java.time.Duration;
@@ -19,9 +17,7 @@ public class OllamaAdapter implements ProviderAdapter {
     public OllamaAdapter(String baseUrl, String model) {
         this.baseUrl = baseUrl;
         this.model = model;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
     }
 
     @Override
@@ -30,15 +26,11 @@ public class OllamaAdapter implements ProviderAdapter {
             Map<String, Object> reqMap = new HashMap<>();
             reqMap.put("model", model);
             reqMap.put("stream", false);
-
             List<Map<String, Object>> messages = new ArrayList<>();
-            if (request.getMessages() != null) {
+            if (request.getMessages() != null)
                 request.getMessages().forEach(msg -> messages.add(msg.toMap()));
-            }
             reqMap.put("messages", messages);
-
-            if (request.getTemperature() != null)
-                reqMap.put("temperature", request.getTemperature());
+            if (request.getTemperature() != null) reqMap.put("temperature", request.getTemperature());
             if (request.getTools() != null) {
                 List<Map<String, Object>> tools = new ArrayList<>();
                 request.getTools().forEach(t -> tools.add(t.toMap()));
@@ -54,15 +46,11 @@ public class OllamaAdapter implements ProviderAdapter {
                 .build();
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200)
-                throw new RuntimeException("Ollama API error: " + resp.body());
-
+            if (resp.statusCode() != 200) throw new RuntimeException("Ollama API error: " + resp.body());
             @SuppressWarnings("unchecked")
             Map<String, Object> data = gson.fromJson(resp.body(), Map.class);
             return parseResponse(data);
-        } catch (Exception e) {
-            return createErrorResponse(e.getMessage());
-        }
+        } catch (Exception e) { return createErrorResponse(e.getMessage()); }
     }
 
     @Override
@@ -71,11 +59,9 @@ public class OllamaAdapter implements ProviderAdapter {
             Map<String, Object> reqMap = new HashMap<>();
             reqMap.put("model", model);
             reqMap.put("stream", true);
-
             List<Map<String, Object>> messages = new ArrayList<>();
-            if (request.getMessages() != null) {
+            if (request.getMessages() != null)
                 request.getMessages().forEach(msg -> messages.add(msg.toMap()));
-            }
             reqMap.put("messages", messages);
 
             String json = gson.toJson(reqMap);
@@ -87,9 +73,6 @@ public class OllamaAdapter implements ProviderAdapter {
                 .build();
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200)
-                throw new RuntimeException("Ollama API error");
-
             for (String line : resp.body().split("\n")) {
                 if (line.isEmpty()) continue;
                 @SuppressWarnings("unchecked")
@@ -101,43 +84,30 @@ public class OllamaAdapter implements ProviderAdapter {
                     if (content != null) onChunk.accept(content.toString());
                 }
             }
-        } catch (Exception e) {
-            onChunk.accept("Error: " + e.getMessage());
-        }
+        } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
     }
 
     @Override
     public String generate(String prompt) {
         try {
-            Map<String, Object> req = Map.of(
-                "model", model,
-                "prompt", prompt,
-                "stream", false
-            );
+            Map<String, Object> req = Map.of("model", model, "prompt", prompt, "stream", false);
             String json = gson.toJson(req);
-
-            HttpRequest httpReq = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/api/generate"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
-
-            HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(
+                HttpRequest.newBuilder().uri(URI.create(baseUrl + "/api/generate"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json)).build(),
+                HttpResponse.BodyHandlers.ofString());
             @SuppressWarnings("unchecked")
             Map<String, Object> data = gson.fromJson(resp.body(), Map.class);
             return (String) data.get("response");
-        } catch (Exception e) {
-            return "Error: " + e.getMessage();
-        }
+        } catch (Exception e) { return "Error: " + e.getMessage(); }
     }
 
     @Override
     public boolean isAvailable() {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl))
-                .GET().build();
-            httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            httpClient.send(HttpRequest.newBuilder().uri(URI.create(baseUrl)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
             return true;
         } catch (Exception e) { return false; }
     }
@@ -146,22 +116,16 @@ public class OllamaAdapter implements ProviderAdapter {
         LLMResponse resp = new LLMResponse();
         resp.setModel((String) data.get("model"));
         resp.setDone(true);
-
         if (data.get("total_duration") != null)
             resp.setTotalDuration(((Number) data.get("total_duration")).longValue());
-        if (data.get("done_reason") != null)
-            resp.setFinishReason((String) data.get("done_reason"));
-
         Object msg = data.get("message");
         if (msg instanceof Map) resp.setMessage(Message.fromMap((Map<String, Object>) msg));
-
         return resp;
     }
 
     private LLMResponse createErrorResponse(String error) {
         LLMResponse resp = new LLMResponse();
-        Message msg = new Message(Message.Role.assistant, "Error: " + error);
-        resp.setMessage(msg);
+        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
         return resp;
     }
 }

@@ -1,6 +1,6 @@
-package com.simpletoolsindia.llm.framework.history;
+package in.simpletools.llm.framework.history;
 
-import com.simpletoolsindia.llm.framework.model.Message;
+import in.simpletools.llm.framework.model.Message;
 import java.util.*;
 
 public class ConversationHistory {
@@ -27,7 +27,5 @@ public class ConversationHistory {
     }
     public int size() { return messages.size(); }
 
-    private void trim() {
-        while (messages.size() > maxHistory) messages.remove(0);
-    }
+    private void trim() { while (messages.size() > maxHistory) messages.remove(0); }
 }

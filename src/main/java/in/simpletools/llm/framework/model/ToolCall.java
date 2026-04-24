@@ -1,4 +1,4 @@
-package com.simpletoolsindia.llm.framework.model;
+package in.simpletools.llm.framework.model;
 
 import java.util.*;
 import com.google.gson.Gson;
@@ -57,13 +57,9 @@ public class ToolCall {
             Function fn = new Function();
             Map<String, Object> fm = (Map<String, Object>) f;
             fn.setName((String) fm.get("name"));
-
             Object args = fm.get("arguments");
-            if (args instanceof Map) {
-                fn.setArguments((Map<String, Object>) args);
-            } else if (args instanceof String) {
-                fn.setArguments(new Gson().fromJson((String) args, Map.class));
-            }
+            if (args instanceof Map) fn.setArguments((Map<String, Object>) args);
+            else if (args instanceof String) fn.setArguments(new Gson().fromJson((String) args, Map.class));
             tc.setFunction(fn);
         }
         return tc;
