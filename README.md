@@ -3,6 +3,7 @@
 A unified Java framework for interacting with multiple Large Language Model (LLM) providers through a single, consistent API.
 
 **Package**: `in.simpletools.llm-client-framework`  
+**Latest Version**: `1.0.1`  
 **Repository**: GitHub Packages
 
 ---
@@ -10,10 +11,10 @@ A unified Java framework for interacting with multiple Large Language Model (LLM
 ## Features
 
 - **12+ LLM Providers** - Local and cloud
-- **Single API** - Consistent interface
-- **Function Calling** - Native tool support
-- **Streaming** - Real-time responses
-- **Conversation History** - Built-in management
+- **Single API** - Consistent interface across all providers
+- **Function Calling** - Native tool/tool support
+- **Streaming** - Real-time streaming responses
+- **Conversation History** - Built-in history management
 
 ---
 
@@ -37,32 +38,19 @@ A unified Java framework for interacting with multiple Large Language Model (LLM
 
 ## Installation
 
-### GitHub Packages (Available Now)
+### GitHub Packages
 
-**1. Create a GitHub Personal Access Token (PAT):**
-- Go to: https://github.com/settings/tokens/new
-- Select scopes: `repo` and `packages`
-- Copy the generated token
+**1. Add repository to your project:**
 
-**2. Configure Gradle credentials:**
-
-Add to `~/.gradle/gradle.properties`:
-```properties
-gpr.user=simpletoolsindia
-gpr.key=YOUR_GITHUB_PAT_HERE
-```
-
-**3. Add repository to your project:**
-
-For Gradle (`build.gradle`):
+For Gradle (`build.gradle` or `build.gradle.kts`):
 ```groovy
 repositories {
     maven {
         name = "GitHubPackages"
         url = uri("https://maven.pkg.github.com/simpletoolsindia/llm-client-framework")
         credentials {
-            username = project.findProperty("gpr.user") ?: ""
-            password = project.findProperty("gpr.key") ?: ""
+            username = "simpletoolsindia"
+            password = System.getenv("GITHUB_TOKEN") ?: ""
         }
     }
 }
@@ -78,9 +66,6 @@ For Maven (`pom.xml`):
     <repository>
         <id>github</id>
         <url>https://maven.pkg.github.com/simpletoolsindia/llm-client-framework</url>
-        <snapshots>
-            <enabled>false</enabled>
-        </snapshots>
     </repository>
 </repositories>
 
@@ -92,6 +77,10 @@ For Maven (`pom.xml`):
     </dependency>
 </dependencies>
 ```
+
+**Note**: For Maven/Gradle authentication, you need a GitHub Personal Access Token with `packages:read` scope. Set it as:
+- Environment variable: `GITHUB_TOKEN`
+- Or in `~/.gradle/gradle.properties`: `gpr.key=YOUR_TOKEN`
 
 ### Local Build
 
@@ -146,7 +135,7 @@ String response = client.chat("Explain recursion", Map.of(
 client.streamChat("Write a story", chunk -> System.out.print(chunk));
 ```
 
-### With Tools
+### With Tools (Function Calling)
 
 ```java
 client.registerTool("calculate", "Math expression",
@@ -173,6 +162,25 @@ LLMClient claude = LLMClientFactory.claude("claude-sonnet-4-20250514", apiKey);
 
 // DeepSeek
 LLMClient deepseek = LLMClientFactory.deepSeek("deepseek-chat", apiKey);
+
+// NVIDIA NIM
+LLMClient nvidia = LLMClientFactory.nvidia("meta/llama-3.1-70b-instruct", apiKey);
+
+// OpenRouter
+LLMClient openrouter = LLMClientFactory.openRouter("anthropic/claude-3.5-sonnet", apiKey);
+```
+
+### Conversation History
+
+```java
+LLMClient client = LLMClientFactory.ollama("gemma4:latest");
+
+client.chat("My name is Alice");
+String response = client.chat("What is my name?");
+
+System.out.println(client.getHistory().size()); // 4 messages
+
+client.clearHistory(); // Start fresh
 ```
 
 ---
@@ -183,6 +191,8 @@ LLMClient deepseek = LLMClientFactory.deepSeek("deepseek-chat", apiKey);
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 export DEEPSEEK_API_KEY=sk-...
+export NVIDIA_API_KEY=nv-...
+export OPENROUTER_API_KEY=sk-or-...
 ```
 
 ---
@@ -193,24 +203,26 @@ export DEEPSEEK_API_KEY=sk-...
 
 | Method | Description |
 |--------|-------------|
-| `ollama(model)` | Ollama (local) |
+| `ollama()` / `ollama(model)` | Ollama (local) |
+| `lmStudio()` / `lmStudio(model)` | LM Studio (local) |
+| `vllm()` / `vllm(model)` | vLLM (local) |
+| `jan()` / `jan(model)` | Jan (local) |
 | `openAI(model, apiKey)` | OpenAI (cloud) |
 | `claude(model, apiKey)` | Claude (cloud) |
 | `deepSeek(model, apiKey)` | DeepSeek (cloud) |
-| `nvidia(model, apiKey)` | NVIDIA (cloud) |
+| `nvidia(model, apiKey)` | NVIDIA NIM (cloud) |
 | `openRouter(model, apiKey)` | OpenRouter (cloud) |
-| `lmStudio(model)` | LM Studio (local) |
-| `vllm(model)` | vLLM (local) |
-| `jan(model)` | Jan (local) |
+| `mistral(model, apiKey)` | Mistral (cloud) |
+| `groq(model, apiKey)` | Groq (cloud) |
 
 ### LLMClient
 
 | Method | Description |
 |--------|-------------|
 | `chat(String)` | Send message, get response |
-| `chat(String, Map)` | With options |
+| `chat(String, Map)` | Send with options (system, temperature, etc.) |
 | `chat(Message)` | Send structured message |
-| `streamChat(String, Consumer)` | Streaming |
+| `streamChat(String, Consumer)` | Streaming response |
 | `registerTool(...)` | Register function tool |
 | `getHistory()` | Get conversation history |
 | `clearHistory()` | Clear all messages |
@@ -240,13 +252,13 @@ Ollama OpenAI Claude Generic
 
 ```
 src/main/java/in/simpletools/llm/framework/
-├── LLMFramework.java        # Entry point
+├── LLMFramework.java           # Entry point / DSL
 ├── client/
-│   ├── LLMClient.java       # Main client
-│   └── LLMClientFactory.java # Factory
+│   ├── LLMClient.java         # Main client
+│   └── LLMClientFactory.java   # Factory methods
 ├── config/
-│   ├── Provider.java        # Enum
-│   └── ClientConfig.java    # Config
+│   ├── Provider.java          # Provider enum
+│   └── ClientConfig.java      # Configuration
 ├── model/
 │   ├── Message.java
 │   ├── LLMRequest.java
@@ -254,10 +266,10 @@ src/main/java/in/simpletools/llm/framework/
 │   ├── Tool.java
 │   └── ToolCall.java
 ├── adapter/
-│   ├── ProviderAdapter.java
-│   ├── OpenAIAdapter.java
-│   ├── OllamaAdapter.java
-│   └── ClaudeAdapter.java
+│   ├── ProviderAdapter.java   # Adapter interface
+│   ├── OpenAIAdapter.java     # OpenAI-compatible
+│   ├── OllamaAdapter.java     # Ollama-specific
+│   └── ClaudeAdapter.java     # Claude API
 ├── tool/
 │   ├── ToolRegistry.java
 │   ├── OllamaTool.java
@@ -271,31 +283,15 @@ src/main/java/in/simpletools/llm/framework/
 ## Build & Run
 
 ```bash
+# Build
 gradle build
+
+# Run example
 gradle run
-```
 
----
-
-## Publishing
-
-### GitHub Packages
-
-```bash
-# 1. Create a GitHub Personal Access Token (PAT) with 'write:packages' scope
-#    https://github.com/settings/tokens/new
-
-# 2. Add credentials to ~/.gradle/gradle.properties
-echo "gpr.user=simpletoolsindia" >> ~/.gradle/gradle.properties
-echo "gpr.key=YOUR_GITHUB_PAT_HERE" >> ~/.gradle/gradle.properties
-
-# 3. Publish
+# Publish to GitHub Packages
 gradle publish
 ```
-
-### Maven Central
-
-Maven Central publishing is configured but requires a paid Sonatype subscription. Once activated, artifacts will be available at Maven Central.
 
 ---
 
@@ -306,3 +302,4 @@ MIT License - See [LICENSE](LICENSE)
 ---
 
 **GitHub**: https://github.com/simpletoolsindia/llm-client-framework
+**Package**: https://github.com/simpletoolsindia/llm-client-framework/packages
