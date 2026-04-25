@@ -7,29 +7,6 @@ import java.util.*;
 
 /**
  * Redis-backed conversation history for persistent, multi-session memory.
- * Uses a simple key-value approach with JSON serialization.
- *
- * <pre>
- * {@code
- * // Basic usage
- * RedisHistory history = RedisHistory.create("localhost", 6379, "session-123");
- * history.addUser("Hello!");
- * history.addAssistant("Hi there!");
- *
- * // Get full conversation
- * List<Message> msgs = history.getMessages();
- *
- * // Save and load conversations
- * history.save();       // persist to Redis
- * history.load();       // reload from Redis
- * history.clear();      // clear local + Redis
- * history.delete();     // delete from Redis
- *
- * // User metadata
- * history.set("key", "value");
- * String val = history.get("key");
- * }
- * </pre>
  */
 public class RedisHistory implements ConversationHistoryStore {
     private static final SimpleLogger log = SimpleLogger.get("RedisHistory");
@@ -93,7 +70,7 @@ public class RedisHistory implements ConversationHistoryStore {
         return h;
     }
 
-    /** Create using a mock/in-memory store (for testing or when Redis unavailable). */
+    /** Create using a mock/in-memory store. */
     public static RedisHistory inMemory(String conversationId) {
         RedisHistory h = new RedisHistory("localhost", 6379, conversationId);
         Map<String, String> store = new HashMap<>();
@@ -108,7 +85,7 @@ public class RedisHistory implements ConversationHistoryStore {
         return h;
     }
 
-    /** Create using HTTP API (e.g., Redis on a remote server with REST interface). */
+    /** Create using HTTP API. */
     public static RedisHistory withHttp(String redisUrl, String conversationId) {
         RedisHistory h = new RedisHistory("http", 0, conversationId);
         h.httpMode = true;
@@ -151,81 +128,39 @@ public class RedisHistory implements ConversationHistoryStore {
         this.gson = new Gson();
     }
 
-    // ===== Core Operations =====
-
-    /** Add a user message. */
     public void addUser(String content) { add(Message.ofUser(content)); }
-
-    /** Add an assistant message. */
     public void addAssistant(String content) { add(Message.ofAssistant(content)); }
-
-    /** Add a system message. */
     public void addSystem(String content) { add(Message.ofSystem(content)); }
-
-    /** Add a tool result message. */
     public void addTool(String content) { add(Message.ofTool(content)); }
-
-    /** Add any message type. */
-    public void add(Message message) {
-        messages.add(message);
-    }
-
-    /** Get all messages in this conversation. */
+    public void add(Message message) { messages.add(message); }
     public List<Message> getMessages() { return new ArrayList<>(messages); }
-
-    /** Get messages with full Redis persistence. */
-    public List<Message> getMessages(boolean fromRedis) {
-        if (fromRedis) load();
-        return getMessages();
-    }
-
+    public List<Message> getMessages(boolean fromRedis) { if (fromRedis) load(); return getMessages(); }
     public List<Message> getLast(int count) {
         int size = messages.size();
         return messages.subList(Math.max(0, size - count), size);
     }
-
-    /** Clear messages locally and optionally from Redis. */
-    public void clear() {
-        messages.clear();
-    }
-
-    /** Clear from Redis storage as well. */
+    public void clear() { messages.clear(); }
     public void clearAll() {
-        clear();
-        if (jedis != null) {
-            jedis.del(historyKey);
-            jedis.del(metaKey);
-        }
+        messages.clear();
+        if (jedis != null) { jedis.del(historyKey); jedis.del(metaKey); }
     }
-
     public int size() { return messages.size(); }
 
-    // ===== Persistence =====
-
-    /** Save current messages to Redis. */
     public void save() { save(DEFAULT_TTL_HOURS); }
-
-    /** Save with custom TTL in hours. */
     public void save(int ttlHours) {
         if (jedis == null) return;
         try {
             String json = gson.toJson(messages);
             jedis.setex(historyKey, ttlHours * 3600L, json);
-            if (!metadata.isEmpty()) {
-                jedis.setex(metaKey, ttlHours * 3600L, gson.toJson(metadata));
-            }
-        } catch (Exception e) {
-            log.error("Failed to save conversation to Redis: {}", e.getMessage());
-        }
+            if (!metadata.isEmpty()) jedis.setex(metaKey, ttlHours * 3600L, gson.toJson(metadata));
+        } catch (Exception e) { log.error("Failed to save conversation to Redis: {}", e.getMessage()); }
     }
 
-    /** Auto-save after each message addition. */
     public void saveOnAdd(int ttlHours) {
         String json = gson.toJson(messages);
         try { jedis.setex(historyKey, ttlHours * 3600L, json); } catch (Exception ignored) {}
     }
 
-    /** Load messages from Redis. */
     public void load() {
         if (jedis == null) return;
         try {
@@ -241,85 +176,42 @@ public class RedisHistory implements ConversationHistoryStore {
                 metadata.clear();
                 m.forEach((k, v) -> metadata.put(k.toString(), v.toString()));
             }
-        } catch (Exception e) {
-            log.error("Failed to load conversation from Redis: {}", e.getMessage());
-        }
+        } catch (Exception e) { log.error("Failed to load conversation from Redis: {}", e.getMessage()); }
     }
 
-    /** Delete conversation from Redis. */
     public void delete() {
-        if (jedis != null) {
-            jedis.del(historyKey);
-            jedis.del(metaKey);
-        }
+        if (jedis != null) { jedis.del(historyKey); jedis.del(metaKey); }
         messages.clear();
         metadata.clear();
     }
 
-    // ===== Metadata =====
-
-    /** Set a metadata key-value pair. */
-    public void set(String key, String value) {
-        metadata.put(key, value);
-    }
-
-    /** Get a metadata value. */
+    public void set(String key, String value) { metadata.put(key, value); }
     public String get(String key) { return metadata.get(key); }
-
-    /** Get all metadata. */
     public Map<String, String> getMetadata() { return new HashMap<>(metadata); }
-
-    // ===== Conversation Management =====
-
     public String getConversationId() { return conversationId; }
+    public boolean isAvailable() { return jedis != null && jedis.ping(); }
 
-    public boolean isAvailable() {
-        if (jedis == null) return false;
-        try { return jedis.ping(); } catch (Exception e) { return false; }
-    }
+    public static List<String> listConversations(String host, int port) { return listConversations(host, port, "llm:history:*"); }
 
-    // ===== Bulk Operations =====
-
-    /** List all conversation IDs stored in Redis. */
-    public static List<String> listConversations(String host, int port) {
-        return listConversations(host, port, "llm:history:*");
-    }
-
-    /** List conversation IDs matching a pattern. Requires Jedis on classpath. */
     public static List<String> listConversations(String host, int port, String pattern) {
         List<String> ids = new ArrayList<>();
         try {
             Class<?> jedisClass = Class.forName("redis.clients.jedis.Jedis");
             Object j = jedisClass.getConstructor(String.class, int.class).newInstance(host, port);
             Object keys = jedisClass.getMethod("keys", String.class).invoke(j, pattern);
-            for (Object k : (Iterable<?>) keys) {
-                ids.add(k.toString().replace("llm:history:", ""));
-            }
+            for (Object k : (Iterable<?>) keys) ids.add(k.toString().replace("llm:history:", ""));
             jedisClass.getMethod("close").invoke(j);
-        } catch (Exception e) {
-            throw new UnsupportedOperationException("Jedis not on classpath. Use inMemory() or withHttp() instead.", e);
-        }
+        } catch (Exception e) { throw new UnsupportedOperationException("Jedis not on classpath.", e); }
         return ids;
     }
 
-    // ===== Convenience Methods =====
-
-    /** Start a new conversation, optionally clearing the old one. */
-    public void reset(boolean clearRedis) {
-        if (clearRedis) delete(); else clear();
-    }
-
-    /** Export conversation as JSON string. */
+    public void reset(boolean clearRedis) { if (clearRedis) delete(); else clear(); }
     public String export() { return gson.toJson(messages); }
-
-    /** Import conversation from JSON string. */
     public void importFrom(String json) {
         try {
             Message[] arr = gson.fromJson(json, Message[].class);
             messages.clear();
             messages.addAll(Arrays.asList(arr));
-        } catch (Exception e) {
-            log.error("Failed to import conversation from JSON: {}", e.getMessage());
-        }
+        } catch (Exception e) { log.error("Failed to import conversation from JSON: {}", e.getMessage()); }
     }
 }

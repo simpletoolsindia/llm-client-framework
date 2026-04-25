@@ -6,6 +6,7 @@ import in.simpletools.llm.framework.model.*;
 import in.simpletools.llm.framework.tool.*;
 import in.simpletools.llm.framework.history.*;
 import in.simpletools.llm.framework.utils.SimpleLogger;
+import in.simpletools.llm.framework.utils.Retry;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
@@ -15,42 +16,6 @@ import java.util.stream.IntStream;
 
 /**
  * High-performance functional LLM Client with async support, tool execution, and token tracking.
- *
- * <p><b>Design Patterns:</b> Factory, Builder, Strategy, Chain of Responsibility
- *
- * <p><b>Key Features:</b>
- * <ul>
- *   <li>Simple fluent tool registration: {@code client.tool("name", desc, (args) -> result)}</li>
- *   <li>Annotation-based auto-registration: {@code client.registerTools(myObject)}</li>
- *   <li>Token tracking: {@code client.getContextInfo()}</li>
- *   <li>Redis-backed history: {@code client.withRedisHistory("session-123")}</li>
- *   <li>Built-in system tools: {@code client.withSystemTools()}</li>
- *   <li>Configurable logging</li>
- * </ul>
- *
- * <pre>
- * {@code
- * // Simple chat
- * LLMClient client = LLMClient.ollama("gemma4:latest");
- * String reply = client.chat("Hello!");
- *
- * // With tools (easy fluent API)
- * client.tool("calculate", "Evaluate math", args -> eval(args.get("expr").toString()))
- *       .tool("search", "Search the web", args -> webSearch(args.get("query").toString()));
- *
- * // With token tracking
- * ContextInfo info = client.getContextInfo();
- * System.out.println(info.summary());
- *
- * // With Redis history
- * client.withRedisHistory("user-session-1");
- *
- * // With system tools
- * client.withSystemTools();
- *
- * String reply = client.chat("Read README.md and tell me about it");
- * }
- * </pre>
  */
 public class LLMClient {
     private final ProviderAdapter adapter;
@@ -59,7 +24,7 @@ public class LLMClient {
     private ConversationHistory history;
     private ToolRegistry toolRegistry;
     private List<Tool> tools;
-    private RetryConfig retryConfig;
+    private Retry.RetryConfig retryConfig;
     private final ExecutorService executor;
     private TokenTracker tokenTracker;
     private boolean autoCompactEnabled = true;
@@ -74,31 +39,10 @@ public class LLMClient {
     private static final String COMPACTION_SYSTEM_PROMPT = """
         You are compressing a conversation to preserve continuity in a limited context window.
         Extract only durable information that matters for future turns.
-        Keep:
-        - user goals and preferences
-        - important facts and constraints
-        - key decisions already made
-        - unresolved questions or pending tasks
-        - important tool outputs or retrieved facts
+        Keep: user goals, important facts, key decisions, unresolved questions, important tool outputs.
         Remove chatter, repetition, and temporary filler.
         Return a compact continuation summary in plain text.
         """;
-
-    // ========== Retry Configuration Record ==========
-    public record RetryConfig(
-        int maxAttempts,
-        Duration initialDelay,
-        double backoffMultiplier,
-        Duration maxDelay
-    ) {
-        public static RetryConfig defaults() {
-            return new RetryConfig(3, Duration.ofMillis(500), 2.0, Duration.ofSeconds(10));
-        }
-
-        public static RetryConfig none() {
-            return new RetryConfig(0, Duration.ZERO, 1.0, Duration.ZERO);
-        }
-    }
 
     // ========== Builder ==========
     public static class Builder {
@@ -106,7 +50,7 @@ public class LLMClient {
         private ConversationHistory history = new ConversationHistory();
         private ToolRegistry toolRegistry = new ToolRegistry();
         private List<Tool> tools = new ArrayList<>();
-        private RetryConfig retryConfig = RetryConfig.defaults();
+        private Retry.RetryConfig retryConfig = Retry.RetryConfig.defaults();
         private ExecutorService executor = Executors.newCachedThreadPool();
         private ProviderAdapter adapter;
         private TokenTracker tokenTracker;
@@ -114,22 +58,18 @@ public class LLMClient {
 
         public Builder config(ClientConfig config) { this.config = config; return this; }
         public Builder history(ConversationHistory h) { this.history = h; return this; }
-        public Builder history(ConversationHistoryStore h) {
-            this.history = new RedisHistoryAdapter(h); return this;
-        }
-        public Builder tools(List<Tool> t) { this.tools = t; return this; }
-        public Builder retry(RetryConfig r) { this.retryConfig = r; return this; }
+        public Builder history(ConversationHistoryStore h) { this.history = new RedisHistoryAdapter(h); return this; }
+        public Builder tools(List<Tool> t) { this.tools = new ArrayList<>(t); return this; }
+        public Builder retry(Retry.RetryConfig r) { this.retryConfig = r; return this; }
         public Builder executor(ExecutorService e) { this.executor = e; return this; }
         public Builder adapter(ProviderAdapter a) { this.adapter = a; return this; }
         public Builder tokenTracker(TokenTracker t) { this.tokenTracker = t; return this; }
         public Builder logger(SimpleLogger l) { this.logger = l; return this; }
-        public Builder loggerLevel(SimpleLogger.Level level) {
-            this.logger.setLevel(level); return this;
-        }
+        public Builder loggerLevel(SimpleLogger.Level level) { this.logger.setLevel(level); return this; }
 
         public LLMClient build() {
-            if (adapter == null && config != null) adapter = createAdapter(config);
-            return new LLMClient(adapter, config, history, toolRegistry, tools, retryConfig, executor, logger, tokenTracker);
+            var resolvedAdapter = adapter != null ? adapter : config != null ? createAdapter(config) : null;
+            return new LLMClient(resolvedAdapter, config, history, toolRegistry, tools, retryConfig, executor, logger, tokenTracker);
         }
     }
 
@@ -137,7 +77,7 @@ public class LLMClient {
 
     // ========== Private Constructor ==========
     private LLMClient(ProviderAdapter adapter, ClientConfig config, ConversationHistory history,
-                      ToolRegistry toolRegistry, List<Tool> tools, RetryConfig retryConfig,
+                      ToolRegistry toolRegistry, List<Tool> tools, Retry.RetryConfig retryConfig,
                       ExecutorService executor, SimpleLogger logger, TokenTracker tokenTracker) {
         this.adapter = adapter;
         this.config = config;
@@ -147,44 +87,24 @@ public class LLMClient {
         this.retryConfig = retryConfig;
         this.executor = executor;
         this.logger = logger;
-        this.tokenTracker = tokenTracker != null ? tokenTracker : new TokenTracker(config.getModel(), TokenTracker.detectLimitForModel(config.getModel()));
+        this.tokenTracker = tokenTracker != null ? tokenTracker : new TokenTracker(config.model(), TokenTracker.detectLimitForModel(config.model()));
     }
 
-    // ========== Easy Tool Registration (Simplified API) ==========
+    // ========== Easy Tool Registration ==========
 
-    /**
-     * Register a tool with a single lambda. Simplest way to add tools.
-     *
-     * <pre>
-     * {@code
-     * // No params needed - just a handler
-     * client.tool("ping", "Check if service is up", () -> "pong");
-     *
-     * // With params - receive args Map
-     * client.tool("calculate", "Evaluate math expression",
-     *     args -> eval(args.get("expr").toString()));
-     * }
-     * </pre>
-     */
     public LLMClient tool(String name, String description,
                           Function<Map<String, Object>, Object> handler) {
         return tool(name, description, handler, Map.of());
     }
 
-    /**
-     * Register a tool with params.
-     */
     public LLMClient tool(String name, String description,
                           Function<Map<String, Object>, Object> handler,
                           Map<String, ToolRegistry.ParamInfo> params) {
         return tool(name, description, handler, params, retryConfig.maxAttempts(),
-            retryConfig.initialDelay().toMillis(), retryConfig.backoffMultiplier(),
-            retryConfig.maxDelay().toMillis());
+            retryConfig.initialDelayMs(), retryConfig.backoffMultiplier(),
+            retryConfig.maxDelayMs());
     }
 
-    /**
-     * Register a tool with full retry configuration.
-     */
     public LLMClient tool(String name, String description,
                           Function<Map<String, Object>, Object> handler,
                           Map<String, ToolRegistry.ParamInfo> params,
@@ -196,29 +116,15 @@ public class LLMClient {
         return this;
     }
 
-    /**
-     * Register a tool with no parameters.
-     */
     public LLMClient tool(String name, String description, Runnable runnable) {
         return tool(name, description, args -> { runnable.run(); return "Done"; });
     }
 
-    /**
-     * Register ALL methods annotated with {@link LLMTool} from a service object.
-     * Auto-discovers tools from the object's class.
-     *
-     * <pre>
-     * {@code
-     * MyTools myTools = new MyTools();
-     * client.registerTools(myTools);  // registers all @LLMTool methods
-     * }
-     * </pre>
-     */
     public LLMClient registerTools(Object service) {
         int before = toolRegistry.getToolCount();
         toolRegistry.registerAll(service);
         toolRegistry.getAllTools().forEach(ti -> {
-            if (tools.stream().noneMatch(t -> t.getFunction().getName().equals(ti.getName()))) {
+            if (tools.stream().noneMatch(t -> t.function().name().equals(ti.name()))) {
                 tools.add(toolFromInfo(ti));
             }
         });
@@ -226,18 +132,8 @@ public class LLMClient {
         return this;
     }
 
-    /**
-     * Register built-in system tools (file, web, bash).
-     * Convenience method combining all system tool categories.
-     */
-    public LLMClient withSystemTools() {
-        return withSystemTools("all");
-    }
+    public LLMClient withSystemTools() { return withSystemTools("all"); }
 
-    /**
-     * Register specific category of system tools.
-     * @param category "all", "file", "web", or "shell"
-     */
     public LLMClient withSystemTools(String category) {
         switch (category.toLowerCase()) {
             case "file" -> in.simpletools.llm.framework.tools.SystemTools.registerFileTools(toolRegistry);
@@ -246,7 +142,7 @@ public class LLMClient {
             default -> in.simpletools.llm.framework.tools.SystemTools.registerAll(toolRegistry);
         }
         toolRegistry.getAllTools().forEach(ti -> {
-            if (tools.stream().noneMatch(t -> t.getFunction().getName().equals(ti.getName()))) {
+            if (tools.stream().noneMatch(t -> t.function().name().equals(ti.name()))) {
                 tools.add(toolFromInfo(ti));
             }
         });
@@ -254,29 +150,16 @@ public class LLMClient {
         return this;
     }
 
-    /**
-     * Register HTTP client tools for calling external REST APIs.
-     * Adds: http_get, http_post, http_put, http_patch, http_delete
-     *
-     * <pre>
-     * {@code
-     * client.withHttpTools();
-     * // Now the LLM can call external APIs like:
-     * // "GET https://api.example.com/users"
-     * // "POST https://api.example.com/users with body {"name":"John"}"
-     * }
-     * </pre>
-     */
     public LLMClient withHttpTools() {
         in.simpletools.llm.framework.tools.HttpTools.registerAll(toolRegistry);
         toolRegistry.getAllTools().stream()
-            .filter(ti -> ti.getName().startsWith("http_"))
+            .filter(ti -> ti.name().startsWith("http_"))
             .forEach(ti -> {
-                if (tools.stream().noneMatch(t -> t.getFunction().getName().equals(ti.getName()))) {
+                if (tools.stream().noneMatch(t -> t.function().name().equals(ti.name()))) {
                     tools.add(toolFromInfo(ti));
                 }
             });
-        int httpCount = (int) toolRegistry.getAllTools().stream().filter(ti -> ti.getName().startsWith("http_")).count();
+        long httpCount = toolRegistry.getAllTools().stream().filter(ti -> ti.name().startsWith("http_")).count();
         logger.info("Registered {} HTTP tools", httpCount);
         return this;
     }
@@ -315,9 +198,9 @@ public class LLMClient {
     }
 
     public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError) {
-        StringBuilder response = new StringBuilder();
         CompletableFuture.runAsync(() -> {
             try {
+                var response = new StringBuilder();
                 ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
                 history.addUser(message);
                 LLMRequest request = buildRequestFromHistory(Map.of());
@@ -325,9 +208,7 @@ public class LLMClient {
                     response.append(token);
                     onToken.accept(token);
                 });
-                // Add assistant response to history after streaming completes
-                String fullResponse = response.toString();
-                history.addAssistant(fullResponse);
+                history.addAssistant(response.toString());
                 syncTokenUsage(null);
                 compactHistoryIfNeeded(Map.of());
             } catch (Exception e) {
@@ -347,10 +228,6 @@ public class LLMClient {
     }
     public LLMClient clearLastN(int n) { history.clearLastN(n); return this; }
 
-    /**
-     * Switch to Redis-backed history for persistent conversations.
-     * Uses in-memory store if Jedis is not on classpath.
-     */
     public LLMClient withRedisHistory(String conversationId) {
         return withRedisHistory(conversationId, "localhost", 6379);
     }
@@ -373,7 +250,6 @@ public class LLMClient {
         return this;
     }
 
-    /** Use in-memory history (default). */
     public LLMClient withMemoryHistory() {
         this.history = new ConversationHistory();
         this.compactedContextSummary = null;
@@ -382,24 +258,16 @@ public class LLMClient {
     }
 
     // ========== Token Tracking ==========
-
-    /** Get current context window usage info. */
     public TokenTracker.ContextInfo getContextInfo() { return tokenTracker.getContextInfo(); }
 
-    /** Estimate context usage if one more user message is added. */
     public TokenTracker.ContextInfo getProjectedContextInfo(String nextUserMessage) {
-        List<Message> projected = new ArrayList<>(history.getMessages());
+        var projected = new ArrayList<>(history.getMessages());
         projected.add(Message.ofUser(nextUserMessage));
         return estimateContextInfo(projected);
     }
 
-    /** Get the token tracker for detailed usage. */
     public TokenTracker getTokenTracker() { return tokenTracker; }
-
-    /** Latest compacted conversation summary used to reduce context size. */
     public String getCompactedContextSummary() { return compactedContextSummary; }
-
-    /** Print context info to stdout. */
     public void printContextInfo() {
         System.out.println(TokenTracker.formatContextInfo(tokenTracker.getContextInfo()));
     }
@@ -408,16 +276,13 @@ public class LLMClient {
     public LLMClient withTools(List<Tool> tools) {
         this.tools.clear(); this.tools.addAll(tools); return this;
     }
-    public LLMClient withRetry(RetryConfig config) {
-        return copyStateTo(new LLMClient(adapter, this.config, this.history, toolRegistry, tools, config, executor, logger, tokenTracker));
+    public LLMClient withRetry(Retry.RetryConfig config) {
+        this.retryConfig = config; return this;
     }
     public LLMClient withRetry(int maxAttempts) {
-        return withRetry(new RetryConfig(maxAttempts, Duration.ofMillis(500), 2.0, Duration.ofSeconds(10)));
+        return withRetry(new Retry.RetryConfig(maxAttempts, 500, 2.0, 10_000));
     }
-    public LLMClient withAutoCompaction() {
-        this.autoCompactEnabled = true;
-        return this;
-    }
+    public LLMClient withAutoCompaction() { this.autoCompactEnabled = true; return this; }
     public LLMClient withAutoCompaction(double triggerPercent, double targetPercent) {
         this.autoCompactEnabled = true;
         this.autoCompactTriggerPercent = triggerPercent;
@@ -431,12 +296,9 @@ public class LLMClient {
         this.compactKeepLastMessages = keepLastMessages;
         return this;
     }
-    public LLMClient withoutAutoCompaction() {
-        this.autoCompactEnabled = false;
-        return this;
-    }
+    public LLMClient withoutAutoCompaction() { this.autoCompactEnabled = false; return this; }
     public LLMClient withContextWindow(long contextWindowTokens) {
-        tokenTracker.setModel(config.getModel(), contextWindowTokens);
+        tokenTracker.setModel(config.model(), contextWindowTokens);
         manualContextWindowConfigured = true;
         return this;
     }
@@ -450,13 +312,8 @@ public class LLMClient {
         logger.setLevel(level);
         return this;
     }
-    public LLMClient withoutVerboseLogging() {
-        logger.setVerbose(false);
-        return this;
-    }
-    public LLMClient setLogLevel(SimpleLogger.Level level) {
-        logger.setLevel(level); return this;
-    }
+    public LLMClient withoutVerboseLogging() { logger.setVerbose(false); return this; }
+    public LLMClient setLogLevel(SimpleLogger.Level level) { logger.setLevel(level); return this; }
     public SimpleLogger getLogger() { return logger; }
 
     // ========== Core Processing ==========
@@ -464,8 +321,8 @@ public class LLMClient {
         ensureContextCapacity(List.of(message), options);
         history.add(message);
         syncTokenUsage(null);
-        logger.debugVerbose(() -> "Accepted user message | role=" + message.getRole()
-            + " | chars=" + safeLength(message.getContent())
+        logger.debugVerbose(() -> "Accepted user message | role=" + message.role()
+            + " | chars=" + safeLength(message.content())
             + " | historyMessages=" + history.size());
         return processCurrentConversation(options);
     }
@@ -473,15 +330,15 @@ public class LLMClient {
     private String processCurrentConversation(Map<String, String> options) {
         logger.debug("Processing conversation with {} messages", history.size());
         LLMRequest request = buildRequestFromHistory(options);
-        logger.debugVerbose(() -> "Request details | model=" + request.getModel()
-            + " | stream=" + request.isStream()
-            + " | messages=" + sizeOf(request.getMessages())
-            + " | tools=" + sizeOf(request.getTools())
+        logger.debugVerbose(() -> "Request details | model=" + request.model()
+            + " | stream=" + request.stream()
+            + " | messages=" + request.messages().size()
+            + " | tools=" + request.tools().size()
             + " | context=" + tokenTracker.getContextInfo().summary());
         LLMResponse response = adapter.chat(request);
-        logger.debugVerbose(() -> "Response details | model=" + response.getModel()
-            + " | finishReason=" + response.getFinishReason()
-            + " | contentChars=" + safeLength(response.getContent()));
+        logger.debugVerbose(() -> "Response details | model=" + response.model()
+            + " | finishReason=" + response.finishReason()
+            + " | contentChars=" + safeLength(response.getContentOrEmpty()));
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
@@ -498,21 +355,21 @@ public class LLMClient {
     // ========== Tool Execution with Retry ==========
     private CompletableFuture<String> handleToolCallsAsync(List<ToolCall> calls) {
         logger.debugVerbose(() -> "Tool call batch | names=" + calls.stream()
-            .map(call -> call.getFunction() != null ? call.getFunction().getName() : "unknown")
-            .toList());
+            .map(call -> call.function() != null ? call.function().name() : "unknown")
+            .collect(Collectors.joining(", ")));
         List<CompletableFuture<String>> futures = calls.stream()
             .map(this::executeToolWithRetryAsync)
             .toList();
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
             .thenApply(v -> IntStream.range(0, futures.size())
-                .mapToObj(index -> getFutureResult(futures.get(index)))
+                .mapToObj(i -> getFutureResult(futures.get(i)))
                 .toList())
             .thenCompose(results -> {
-                IntStream.range(0, calls.size()).forEach(index -> {
-                    ToolCall call = calls.get(index);
-                    Message toolMsg = Message.ofTool(results.get(index));
-                    toolMsg.setName(call.getFunction() != null ? call.getFunction().getName() : null);
+                IntStream.range(0, calls.size()).forEach(i -> {
+                    ToolCall call = calls.get(i);
+                    Message toolMsg = Message.ofTool(results.get(i));
+                    toolMsg = toolMsg.withName(call.function() != null ? call.function().name() : null);
                     history.add(toolMsg);
                 });
                 syncTokenUsage(null);
@@ -522,8 +379,8 @@ public class LLMClient {
 
     private CompletableFuture<String> executeToolWithRetryAsync(ToolCall call) {
         return CompletableFuture.supplyAsync(() -> {
-            String toolName = call.getFunction().getName();
-            Map<String, Object> args = call.getFunction().getArguments();
+            String toolName = call.function().name();
+            Map<String, Object> args = call.function().arguments();
             ToolRegistry.ToolInfo info = toolRegistry.get(toolName);
 
             if (info == null) {
@@ -531,39 +388,12 @@ public class LLMClient {
                 return "{\"error\": \"Tool not found: " + toolName + "\"}";
             }
 
-            int maxRetries = info.getMaxRetries();
-            logger.debugVerbose(() -> "Executing tool | name=" + toolName + " | args=" + args);
-            if (maxRetries <= 0) {
-                try {
-                    Object result = info.invoke(args);
-                    return new com.google.gson.Gson().toJson(result);
-                } catch (Exception e) {
-                    return "{\"error\": \"" + e.getMessage() + "\"}";
-                }
+            try {
+                Object result = info.invoke(args);
+                return new com.google.gson.Gson().toJson(result);
+            } catch (Exception e) {
+                return "{\"error\": \"" + e.getMessage() + "\"}";
             }
-
-            long delay = 500;
-            for (int attempt = 0; attempt < maxRetries; attempt++) {
-                try {
-                    long start = System.currentTimeMillis();
-                    Object result = info.invoke(args);
-                    long elapsed = System.currentTimeMillis() - start;
-                    logger.debug("Tool '{}' executed in {}ms (attempt {})", toolName, elapsed, attempt + 1);
-                    return new com.google.gson.Gson().toJson(result);
-                } catch (Exception e) {
-                    logger.warn("Tool '{}' failed (attempt {}/{}): {}",
-                        toolName, attempt + 1, maxRetries, e.getMessage());
-                    if (attempt >= maxRetries - 1) {
-                        return "{\"error\": \"Tool execution failed after " + maxRetries + " attempts: " + e.getMessage() + "\"}";
-                    }
-                    try { Thread.sleep(delay); } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return "{\"error\": \"Tool execution interrupted\"}";
-                    }
-                    delay = Math.min((long)(delay * 2.0), 10000);
-                }
-            }
-            return "{\"error\": \"Tool execution failed\"}";
         }, executor);
     }
 
@@ -582,10 +412,10 @@ public class LLMClient {
 
     // ========== Request Building ==========
     private LLMRequest buildRequestFromHistory(Map<String, String> options) {
-        List<Message> requestMessages = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
+        var requestMessages = prependSystemMessage(history.getMessages(), options);
         return LLMRequest.builder()
-            .model(config.getModel())
-            .stream(config.isStream())
+            .model(config.model())
+            .stream(config.stream())
             .messages(requestMessages)
             .temperature(parseTemperature(options))
             .tools(tools.isEmpty() ? null : tools)
@@ -595,34 +425,26 @@ public class LLMClient {
     private TokenTracker.ContextInfo estimateContextInfo(List<Message> messages) {
         long totalLimit = tokenTracker.getModelLimit() > 0
             ? tokenTracker.getModelLimit()
-            : TokenTracker.detectLimitForModel(config.getModel());
+            : TokenTracker.detectLimitForModel(config.model());
         int used = tokenTracker.estimateTokens(messages);
         int remaining = (int) Math.max(0, totalLimit - used);
         double usagePercent = totalLimit > 0 ? (used * 100.0 / totalLimit) : 0;
         return new TokenTracker.ContextInfo(
-            config.getModel(),
-            totalLimit,
-            used,
-            remaining,
-            used,
-            0,
-            usagePercent,
-            messages.size()
-        );
+            config.model(), totalLimit, used, remaining, used, 0, usagePercent, messages.size());
     }
 
     private void syncTokenUsage(LLMResponse response) {
-        List<Message> currentMessages = history.getMessages();
-        if (response != null && response.getModel() != null) {
+        var currentMessages = history.getMessages();
+        if (response != null && response.model() != null) {
             long contextLimit = manualContextWindowConfigured
                 ? tokenTracker.getModelLimit()
-                : TokenTracker.detectLimitForModel(response.getModel());
-            tokenTracker.setModel(response.getModel(), contextLimit);
-        } else if (config.getModel() != null && tokenTracker.getModel() == null) {
-            tokenTracker.setModel(config.getModel(), TokenTracker.detectLimitForModel(config.getModel()));
+                : TokenTracker.detectLimitForModel(response.model());
+            tokenTracker.setModel(response.model(), contextLimit);
+        } else if (config.model() != null && tokenTracker.getModel() == null) {
+            tokenTracker.setModel(config.model(), TokenTracker.detectLimitForModel(config.model()));
         }
 
-        if (response != null && response.getUsage() != null) {
+        if (response != null && response.usage() != null) {
             tokenTracker.updateFromUsage(response, currentMessages.size());
         } else {
             tokenTracker.syncWithConversation(currentMessages);
@@ -633,7 +455,7 @@ public class LLMClient {
     private void ensureContextCapacity(List<Message> pendingMessages, Map<String, String> options) {
         if (!autoCompactEnabled || compactingHistory) return;
 
-        List<Message> projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
+        var projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
         projected.addAll(pendingMessages);
 
         TokenTracker.ContextInfo projectedInfo = estimateContextInfo(projected);
@@ -654,7 +476,7 @@ public class LLMClient {
 
     private void compactHistoryUntilWithinTarget(Map<String, String> options, List<Message> pendingMessages) {
         for (int attempt = 0; attempt < MAX_COMPACTION_ATTEMPTS; attempt++) {
-            List<Message> projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
+            var projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
             projected.addAll(pendingMessages);
 
             TokenTracker.ContextInfo info = estimateContextInfo(projected);
@@ -664,20 +486,18 @@ public class LLMClient {
         }
     }
 
-    public String compactHistoryNow() {
-        return compactHistoryInternal();
-    }
+    public String compactHistoryNow() { return compactHistoryInternal(); }
 
     private String compactHistoryInternal() {
         if (compactingHistory || history.size() <= 2) return compactedContextSummary;
 
         compactingHistory = true;
         try {
-            List<Message> existingMessages = history.getMessages();
+            var existingMessages = history.getMessages();
             String transcript = formatTranscript(existingMessages);
             if (transcript.isBlank()) return compactedContextSummary;
 
-            List<Message> summaryMessages = new ArrayList<>();
+            var summaryMessages = new ArrayList<Message>();
             summaryMessages.add(Message.ofSystem(COMPACTION_SYSTEM_PROMPT));
             if (compactedContextSummary != null && !compactedContextSummary.isBlank()) {
                 summaryMessages.add(Message.ofUser("Existing rolling summary:\n" + compactedContextSummary));
@@ -685,7 +505,7 @@ public class LLMClient {
             summaryMessages.add(Message.ofUser("Conversation transcript to compress:\n" + transcript));
 
             LLMRequest summaryRequest = LLMRequest.builder()
-                .model(config.getModel())
+                .model(config.model())
                 .messages(summaryMessages)
                 .stream(false)
                 .build();
@@ -697,25 +517,19 @@ public class LLMClient {
             compactedContextSummary = summary;
             logger.infoVerbose(() -> "Compaction summary generated | chars=" + summary.length());
 
-            List<Message> newHistory = new ArrayList<>();
-            for (Message message : existingMessages) {
-                if (message.getRole() == Message.Role.system
-                    && message.getContent() != null
-                    && !message.getContent().startsWith(COMPACTED_CONTEXT_PREFIX)) {
-                    newHistory.add(message);
-                }
-            }
+            // Preserve system messages that aren't compacted summaries
+            var newHistory = existingMessages.stream()
+                .filter(m -> m.role() != Message.Role.system || m.content() == null || m.content().startsWith(COMPACTED_CONTEXT_PREFIX))
+                .collect(Collectors.toCollection(ArrayList::new));
 
-            Message summaryMessage = Message.ofSystem(COMPACTED_CONTEXT_PREFIX + summary);
-            newHistory.add(summaryMessage);
+            newHistory.add(Message.ofSystem(COMPACTED_CONTEXT_PREFIX + summary));
 
-            List<Message> nonSystemRecent = existingMessages.stream()
-                .filter(message -> message.getRole() != Message.Role.system)
+            var nonSystemRecent = existingMessages.stream()
+                .filter(m -> m.role() != Message.Role.system)
                 .toList();
-            List<Message> recentMessages = nonSystemRecent.subList(
+            var recentMessages = nonSystemRecent.subList(
                 Math.max(0, nonSystemRecent.size() - compactKeepLastMessages),
-                nonSystemRecent.size()
-            );
+                nonSystemRecent.size());
             newHistory.addAll(recentMessages);
 
             history.replaceAll(newHistory);
@@ -737,25 +551,21 @@ public class LLMClient {
     }
 
     private String formatTranscriptMessage(Message message) {
-        String content = message.getContent();
-        boolean hasToolCalls = message.getToolCalls() != null && !message.getToolCalls().isEmpty();
-        if ((content == null || content.isBlank()) && !hasToolCalls) return "";
+        boolean hasToolCalls = !message.toolCalls().isEmpty();
+        if ((message.content() == null || message.content().isBlank()) && !hasToolCalls) return "";
 
-        StringBuilder line = new StringBuilder(message.getRole().name().toUpperCase());
-        if (message.getName() != null && !message.getName().isBlank()) {
-            line.append(" (").append(message.getName()).append(")");
+        var line = new StringBuilder(message.role().name().toUpperCase());
+        if (message.name() != null && !message.name().isBlank()) {
+            line.append(" (").append(message.name()).append(")");
         }
         line.append(": ");
 
-        if (content != null && !content.isBlank()) line.append(content);
+        if (message.content() != null && !message.content().isBlank()) line.append(message.content());
         if (hasToolCalls) {
-            String toolLines = message.getToolCalls().stream()
-                .map(call -> "Tool call -> "
-                    + (call.getFunction() != null ? call.getFunction().getName() : "unknown")
-                    + " "
-                    + (call.getFunction() != null ? call.getFunction().getArguments() : Map.of()))
+            var toolLines = message.toolCalls().stream()
+                .map(call -> "Tool call -> " + call.function().name() + " " + call.function().arguments())
                 .collect(Collectors.joining("\n"));
-            if (content != null && !content.isBlank()) line.append("\n");
+            if (message.content() != null && !message.content().isBlank()) line.append("\n");
             line.append(toolLines);
         }
         return line.toString();
@@ -765,7 +575,7 @@ public class LLMClient {
         String system = options.get("system");
         if (system == null || system.isBlank()) return messages;
 
-        List<Message> requestMessages = new ArrayList<>();
+        var requestMessages = new ArrayList<Message>();
         requestMessages.add(Message.ofSystem(system));
         requestMessages.addAll(messages);
         return requestMessages;
@@ -777,59 +587,31 @@ public class LLMClient {
     }
 
     private String getFutureResult(CompletableFuture<String> future) {
-        try {
-            return future.get();
-        } catch (Exception e) {
-            return "Error: " + e.getMessage();
-        }
+        try { return future.get(); }
+        catch (Exception e) { return "Error: " + e.getMessage(); }
     }
 
     private String extractCompactedSummary(List<Message> messages) {
         return messages.stream()
-            .filter(message -> message.getRole() == Message.Role.system)
-            .map(Message::getContent)
+            .filter(m -> m.role() == Message.Role.system)
+            .map(Message::content)
             .filter(Objects::nonNull)
-            .filter(content -> content.startsWith(COMPACTED_CONTEXT_PREFIX))
-            .map(content -> content.substring(COMPACTED_CONTEXT_PREFIX.length()))
+            .filter(c -> c.startsWith(COMPACTED_CONTEXT_PREFIX))
+            .map(c -> c.substring(COMPACTED_CONTEXT_PREFIX.length()))
             .reduce((first, second) -> second)
             .orElse(null);
     }
 
-    private LLMClient copyStateTo(LLMClient target) {
-        target.autoCompactEnabled = autoCompactEnabled;
-        target.autoCompactTriggerPercent = autoCompactTriggerPercent;
-        target.autoCompactTargetPercent = autoCompactTargetPercent;
-        target.compactKeepLastMessages = compactKeepLastMessages;
-        target.compactedContextSummary = compactedContextSummary;
-        target.manualContextWindowConfigured = manualContextWindowConfigured;
-        target.logger.setVerbose(logger.isVerbose());
-        target.logger.setLevel(logger.getLevel());
-        return target;
-    }
-
-    private int safeLength(String value) {
-        return value != null ? value.length() : 0;
-    }
-
-    private int sizeOf(Collection<?> values) {
-        return values != null ? values.size() : 0;
-    }
+    private int safeLength(String value) { return value != null ? value.length() : 0; }
 
     // ========== Tool Conversion ==========
     private Tool toolFromInfo(ToolRegistry.ToolInfo info) {
-        Tool tool = new Tool();
-        Tool.Function fn = new Tool.Function();
-        fn.setName(info.getName());
-        fn.setDescription(info.getDescription());
-        fn.setParameters(new HashMap<>());
-        info.getParams().forEach((k, v) -> {
-            Tool.Function.Param p = new Tool.Function.Param();
-            p.setType(ToolRegistry.ParamInfo.jsonType(v.getType()));
-            p.setDescription(v.getDescription());
-            fn.getParameters().put(k, p);
-        });
-        tool.setFunction(fn);
-        return tool;
+        var fn = new Tool.Function(
+            info.name(), info.description(),
+            info.params().entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> new Tool.Function.Param(ToolRegistry.ParamInfo.jsonType(e.getValue().type()), e.getValue().description())))
+        );
+        return new Tool("function", fn);
     }
 
     // ========== Static Factory Methods ==========
@@ -849,9 +631,9 @@ public class LLMClient {
     public static LLMClient mistral(String model, String apiKey) { return create(ClientConfig.of(Provider.MISTRAL).model(model).apiKey(apiKey)); }
 
     private static ProviderAdapter createAdapter(ClientConfig config) {
-        return switch (config.getProvider()) {
-            case OLLAMA -> new OllamaAdapter(config.getBaseUrl(), config.getModel());
-            case ANTHROPIC -> new ClaudeAdapter(config.getBaseUrl(), config.getModel(), config.getApiKey());
+        return switch (config.provider()) {
+            case OLLAMA -> new OllamaAdapter(config.baseUrl(), config.model());
+            case ANTHROPIC -> new ClaudeAdapter(config.baseUrl(), config.model(), config.apiKey());
             default -> new OpenAIAdapter(config);
         };
     }

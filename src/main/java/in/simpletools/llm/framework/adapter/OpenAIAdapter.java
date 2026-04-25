@@ -8,6 +8,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 public class OpenAIAdapter implements ProviderAdapter {
     protected final ClientConfig config;
@@ -24,9 +25,9 @@ public class OpenAIAdapter implements ProviderAdapter {
         try {
             String json = gson.toJson(request.toMap());
             HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(config.getBaseUrl() + "/chat/completions"))
+                .uri(URI.create(config.baseUrl() + "/chat/completions"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + config.getApiKey())
+                .header("Authorization", "Bearer " + config.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .timeout(Duration.ofMinutes(5))
                 .build();
@@ -49,9 +50,9 @@ public class OpenAIAdapter implements ProviderAdapter {
             String json = gson.toJson(reqMap);
 
             HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(config.getBaseUrl() + "/chat/completions"))
+                .uri(URI.create(config.baseUrl() + "/chat/completions"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + config.getApiKey())
+                .header("Authorization", "Bearer " + config.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .timeout(Duration.ofMinutes(5))
                 .build();
@@ -85,12 +86,12 @@ public class OpenAIAdapter implements ProviderAdapter {
     @Override
     public String generate(String prompt) {
         try {
-            Map<String, Object> req = Map.of("model", config.getModel(), "prompt", prompt, "max_tokens", 1000);
+            Map<String, Object> req = Map.of("model", config.model(), "prompt", prompt, "max_tokens", 1000);
             String json = gson.toJson(req);
             HttpRequest httpReq = HttpRequest.newBuilder()
-                .uri(URI.create(config.getBaseUrl() + "/completions"))
+                .uri(URI.create(config.baseUrl() + "/completions"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + config.getApiKey())
+                .header("Authorization", "Bearer " + config.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
             HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
@@ -105,7 +106,7 @@ public class OpenAIAdapter implements ProviderAdapter {
     @Override
     public boolean isAvailable() {
         try {
-            httpClient.send(HttpRequest.newBuilder().uri(URI.create(config.getBaseUrl())).GET().build(),
+            httpClient.send(HttpRequest.newBuilder().uri(URI.create(config.baseUrl())).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
             return true;
         } catch (Exception e) { return false; }
@@ -113,41 +114,45 @@ public class OpenAIAdapter implements ProviderAdapter {
 
     @Override
     public LLMResponse fromProviderFormat(Map<String, Object> data) {
-        LLMResponse resp = new LLMResponse();
-        resp.setModel((String) data.get("model"));
+        var model = (String) data.get("model");
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> choices = (List<Map<String, Object>>) data.get("choices");
+
+        Message message = new Message(Message.Role.assistant, "");
+        String finishReason = null;
+
         if (choices != null && !choices.isEmpty()) {
-            Map<String, Object> choice = choices.get(0);
-            resp.setFinishReason((String) choice.get("finish_reason"));
+            var choice = choices.get(0);
+            finishReason = (String) choice.get("finish_reason");
             @SuppressWarnings("unchecked")
             Map<String, Object> msgMap = (Map<String, Object>) choice.get("message");
-            if (msgMap != null) resp.setMessage(Message.fromMap(msgMap));
+            if (msgMap != null) message = Message.fromMap(msgMap);
         }
+
+        LLMResponse.Usage usage = parseUsage(data);
+
+        return new LLMResponse(model, message, finishReason, null, usage, true, null, null, null);
+    }
+
+    private LLMResponse.Usage parseUsage(Map<String, Object> data) {
         Object usageObj = data.get("usage");
-        if (usageObj instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> usageMap = (Map<String, Object>) usageObj;
-            LLMResponse.Usage usage = new LLMResponse.Usage();
-            if (usageMap.get("prompt_tokens") != null)
-                usage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
-            if (usageMap.get("completion_tokens") != null)
-                usage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
-            if (usageMap.get("total_tokens") != null)
-                usage.setTotalTokens(((Number) usageMap.get("total_tokens")).intValue());
-            if (usageMap.get("input_tokens") != null)
-                usage.setInputTokens(((Number) usageMap.get("input_tokens")).intValue());
-            if (usageMap.get("output_tokens") != null)
-                usage.setOutputTokens(((Number) usageMap.get("output_tokens")).intValue());
-            resp.setUsage(usage);
-        }
-        resp.setDone(true);
-        return resp;
+        if (!(usageObj instanceof Map)) return new LLMResponse.Usage(0, 0, 0, 0, 0);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> usageMap = (Map<String, Object>) usageObj;
+        int promptTokens = toInt(usageMap.get("prompt_tokens"));
+        int completionTokens = toInt(usageMap.get("completion_tokens"));
+        int totalTokens = toInt(usageMap.get("total_tokens"));
+        int inputTokens = toInt(usageMap.get("input_tokens"));
+        int outputTokens = toInt(usageMap.get("output_tokens"));
+        return new LLMResponse.Usage(promptTokens, completionTokens, totalTokens, inputTokens, outputTokens);
+    }
+
+    private int toInt(Object val) {
+        return val instanceof Number ? ((Number) val).intValue() : 0;
     }
 
     protected LLMResponse createErrorResponse(String error) {
-        LLMResponse resp = new LLMResponse();
-        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
-        return resp;
+        return new LLMResponse(null, new Message(Message.Role.assistant, "Error: " + error), "error", null, null, true, null, null, null);
     }
 }

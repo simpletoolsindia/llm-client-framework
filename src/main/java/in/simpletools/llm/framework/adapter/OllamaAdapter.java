@@ -7,6 +7,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 public class OllamaAdapter implements ProviderAdapter {
     private final String baseUrl;
@@ -23,20 +24,7 @@ public class OllamaAdapter implements ProviderAdapter {
     @Override
     public LLMResponse chat(LLMRequest request) {
         try {
-            Map<String, Object> reqMap = new HashMap<>();
-            reqMap.put("model", model);
-            reqMap.put("stream", false);
-            List<Map<String, Object>> messages = new ArrayList<>();
-            if (request.getMessages() != null)
-                request.getMessages().forEach(msg -> messages.add(msg.toMap()));
-            reqMap.put("messages", messages);
-            if (request.getTemperature() != null) reqMap.put("temperature", request.getTemperature());
-            if (request.getTools() != null) {
-                List<Map<String, Object>> tools = new ArrayList<>();
-                request.getTools().forEach(t -> tools.add(t.toMap()));
-                reqMap.put("tools", tools);
-            }
-
+            var reqMap = buildRequestMap(request, false);
             String json = gson.toJson(reqMap);
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/api/chat"))
@@ -56,14 +44,7 @@ public class OllamaAdapter implements ProviderAdapter {
     @Override
     public void streamChat(LLMRequest request, Consumer<String> onChunk) {
         try {
-            Map<String, Object> reqMap = new HashMap<>();
-            reqMap.put("model", model);
-            reqMap.put("stream", true);
-            List<Map<String, Object>> messages = new ArrayList<>();
-            if (request.getMessages() != null)
-                request.getMessages().forEach(msg -> messages.add(msg.toMap()));
-            reqMap.put("messages", messages);
-
+            var reqMap = buildRequestMap(request, true);
             String json = gson.toJson(reqMap);
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/api/chat"))
@@ -85,6 +66,20 @@ public class OllamaAdapter implements ProviderAdapter {
                 }
             }
         } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
+    }
+
+    private Map<String, Object> buildRequestMap(LLMRequest request, boolean stream) {
+        var reqMap = new HashMap<String, Object>();
+        reqMap.put("model", model);
+        reqMap.put("stream", stream);
+        var messages = request.messages().stream().map(Message::toMap).collect(Collectors.toList());
+        reqMap.put("messages", messages);
+        if (request.temperature() != null) reqMap.put("temperature", request.temperature());
+        if (!request.tools().isEmpty()) {
+            var tools = request.tools().stream().map(Tool::toMap).collect(Collectors.toList());
+            reqMap.put("tools", tools);
+        }
+        return reqMap;
     }
 
     @Override
@@ -113,58 +108,46 @@ public class OllamaAdapter implements ProviderAdapter {
     }
 
     private LLMResponse parseResponse(Map<String, Object> data) {
-        LLMResponse resp = new LLMResponse();
-        resp.setModel((String) data.get("model"));
-        resp.setDone(true);
-        if (data.get("total_duration") != null)
-            resp.setTotalDuration(((Number) data.get("total_duration")).longValue());
-        LLMResponse.Usage usage = new LLMResponse.Usage();
-        boolean hasUsage = false;
-        if (data.get("prompt_eval_count") != null) {
-            int prompt = ((Number) data.get("prompt_eval_count")).intValue();
-            usage.setPromptTokens(prompt);
-            usage.setInputTokens(prompt);
-            hasUsage = true;
-        }
-        if (data.get("eval_count") != null) {
-            int completion = ((Number) data.get("eval_count")).intValue();
-            usage.setCompletionTokens(completion);
-            usage.setOutputTokens(completion);
-            hasUsage = true;
-        }
-        if (hasUsage) {
-            usage.setTotalTokens(usage.getPromptTokens() + usage.getCompletionTokens());
-            resp.setUsage(usage);
-        }
-        Object msg = data.get("message");
-        if (msg instanceof Map) {
-            Map<String, Object> msgMap = (Map<String, Object>) msg;
-            Message message = Message.fromMap(msgMap);
+        var model = (String) data.get("model");
+        Long totalDuration = data.get("total_duration") instanceof Number n ? n.longValue() : null;
 
-            // Check for tool calls and set them on message
-            if (msgMap.get("tool_calls") != null) {
-                List<ToolCall> toolCalls = new ArrayList<>();
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> toolCallsRaw = (List<Map<String, Object>>) msgMap.get("tool_calls");
-                for (Map<String, Object> tc : toolCallsRaw) {
-                    ToolCall toolCall = new ToolCall();
-                    ToolCall.Function fn = new ToolCall.Function();
-                    Map<String, Object> fnMap = (Map<String, Object>) tc.get("function");
-                    fn.setName((String) fnMap.get("name"));
-                    fn.setArguments((Map<String, Object>) fnMap.get("arguments"));
-                    toolCall.setFunction(fn);
-                    toolCalls.add(toolCall);
-                }
-                message.setToolCalls(toolCalls);
+        var usage = parseUsage(data);
+
+        Message message = new Message(Message.Role.assistant, "");
+        if (data.get("message") instanceof Map<?, ?> msgMap) {
+            message = Message.fromMap((Map<String, Object>) msgMap);
+
+            // Check for tool calls
+            if (msgMap.get("tool_calls") instanceof List<?> toolCallsRaw) {
+                var toolCalls = toolCallsRaw.stream()
+                    .filter(tc -> tc instanceof Map)
+                    .map(tc -> parseToolCall((Map<String, Object>) tc))
+                    .collect(Collectors.toList());
+                message = message.withToolCalls(toolCalls);
             }
-            resp.setMessage(message);
         }
-        return resp;
+
+        return new LLMResponse(model, message, "stop", totalDuration, usage, true, null, null, null);
+    }
+
+    private LLMResponse.Usage parseUsage(Map<String, Object> data) {
+        int promptTokens = data.get("prompt_eval_count") instanceof Number n ? n.intValue() : 0;
+        int completionTokens = data.get("eval_count") instanceof Number n ? n.intValue() : 0;
+        int totalTokens = promptTokens + completionTokens;
+        return new LLMResponse.Usage(promptTokens, completionTokens, totalTokens, promptTokens, completionTokens);
+    }
+
+    private ToolCall parseToolCall(Map<String, Object> tc) {
+        if (tc.get("function") instanceof Map<?, ?> fnMap) {
+            var name = (String) fnMap.get("name");
+            @SuppressWarnings("unchecked")
+            var arguments = (Map<String, Object>) fnMap.get("arguments");
+            return new ToolCall(null, new ToolCall.Function(name, arguments));
+        }
+        return new ToolCall(null, new ToolCall.Function("", Map.of()));
     }
 
     private LLMResponse createErrorResponse(String error) {
-        LLMResponse resp = new LLMResponse();
-        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
-        return resp;
+        return new LLMResponse(null, new Message(Message.Role.assistant, "Error: " + error), "error", null, null, true, null, null, null);
     }
 }

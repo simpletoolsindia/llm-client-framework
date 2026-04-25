@@ -7,6 +7,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 public class ClaudeAdapter implements ProviderAdapter {
     private final String apiKey;
@@ -89,79 +90,84 @@ public class ClaudeAdapter implements ProviderAdapter {
     }
 
     private Map<String, Object> toClaudeFormat(LLMRequest request) {
-        Map<String, Object> m = new HashMap<>();
+        var m = new HashMap<String, Object>();
         m.put("model", model);
-        m.put("max_tokens", request.getMaxTokens() != null ? request.getMaxTokens() : 1024);
-        if (request.getTemperature() != null) m.put("temperature", request.getTemperature());
-        List<Map<String, Object>> msgs = new ArrayList<>();
-        if (request.getMessages() != null) {
-            for (Message msg : request.getMessages()) {
-                if (msg.getRole() == Message.Role.system) m.put("system", msg.getContent());
-                else {
-                    Map<String, Object> msgMap = new HashMap<>();
-                    msgMap.put("role", msg.getRole().name());
-                    msgMap.put("content", msg.getContent());
-                    msgs.add(msgMap);
-                }
-            }
-        }
+        m.put("max_tokens", request.maxTokens() != null ? request.maxTokens() : 1024);
+        if (request.temperature() != null) m.put("temperature", request.temperature());
+
+        // Extract system message and build messages list
+        var systemMsgs = request.messages().stream()
+            .filter(msg -> msg.role() == Message.Role.system)
+            .map(Message::content)
+            .toList();
+        String systemPrompt = systemMsgs.isEmpty() ? null : systemMsgs.get(0);
+
+        var msgs = request.messages().stream()
+            .filter(msg -> msg.role() != Message.Role.system)
+            .map(msg -> {
+                var msgMap = new HashMap<String, Object>();
+                msgMap.put("role", msg.role().name());
+                msgMap.put("content", msg.content());
+                return msgMap;
+            })
+            .collect(Collectors.toList());
+
+        if (systemPrompt != null) m.put("system", systemPrompt);
         m.put("messages", msgs);
         return m;
     }
 
     private LLMResponse fromClaudeFormat(Map<String, Object> data) {
-        LLMResponse resp = new LLMResponse();
-        resp.setModel(model);
-        resp.setDone(true);
-        Object stop = data.get("stop_reason");
-        if (stop != null) resp.setFinishReason(stop.toString());
-
-        // Extract usage data
-        Object usageObj = data.get("usage");
-        if (usageObj instanceof Map) {
-            LLMResponse.Usage usage = new LLMResponse.Usage();
-            @SuppressWarnings("unchecked")
-            Map<String, Object> usageMap = (Map<String, Object>) usageObj;
-            if (usageMap.get("input_tokens") != null)
-                usage.setInputTokens(((Number) usageMap.get("input_tokens")).intValue());
-            if (usageMap.get("output_tokens") != null)
-                usage.setOutputTokens(((Number) usageMap.get("output_tokens")).intValue());
-            if (usageMap.get("prompt_tokens") != null)
-                usage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
-            if (usageMap.get("completion_tokens") != null)
-                usage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
-            resp.setUsage(usage);
-        }
+        var finishReason = data.get("stop_reason") != null ? data.get("stop_reason").toString() : null;
+        var usage = parseUsage(data);
 
         // Extract content blocks (text and tool_use)
         List<ToolCall> toolCalls = new ArrayList<>();
         StringBuilder textContent = new StringBuilder();
-        Object content = data.get("content");
-        if (content instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> blocks = (List<Map<String, Object>>) content;
-            for (Map<String, Object> block : blocks) {
-                if ("text".equals(block.get("type"))) {
-                    String text = (String) block.get("text");
+
+        if (data.get("content") instanceof List<?> blocks) {
+            for (var block : blocks) {
+                if (!(block instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                var b = (Map<String, Object>) block;
+                if ("text".equals(b.get("type"))) {
+                    String text = (String) b.get("text");
                     if (text != null) textContent.append(text);
-                } else if ("tool_use".equals(block.get("type"))) {
-                    ToolCall tc = new ToolCall();
-                    tc.setId((String) block.get("id"));
-                    ToolCall.Function fn = new ToolCall.Function();
-                    fn.setName((String) block.get("name"));
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> input = (Map<String, Object>) block.get("input");
-                    fn.setArguments(input != null ? input : new java.util.HashMap<>());
-                    tc.setFunction(fn);
+                } else if ("tool_use".equals(b.get("type"))) {
+                    var tc = parseToolCall(b);
                     toolCalls.add(tc);
                 }
             }
         }
 
-        Message message = new Message(Message.Role.assistant, textContent.toString());
-        if (!toolCalls.isEmpty()) message.setToolCalls(toolCalls);
-        resp.setMessage(message);
-        return resp;
+        var message = new Message(Message.Role.assistant, textContent.toString());
+        if (!toolCalls.isEmpty()) message = message.withToolCalls(toolCalls);
+
+        return new LLMResponse(model, message, finishReason, null, usage, true, null, null, null);
+    }
+
+    private ToolCall parseToolCall(Map<String, Object> block) {
+        var id = (String) block.get("id");
+        var name = (String) block.get("name");
+        @SuppressWarnings("unchecked")
+        var input = (Map<String, Object>) block.get("input");
+        var fn = new ToolCall.Function(name, input != null ? input : Map.of());
+        return new ToolCall(id, fn);
+    }
+
+    private LLMResponse.Usage parseUsage(Map<String, Object> data) {
+        if (!(data.get("usage") instanceof Map)) return new LLMResponse.Usage(0, 0, 0, 0, 0);
+        @SuppressWarnings("unchecked")
+        var usageMap = (Map<String, Object>) data.get("usage");
+        int inputTokens = toInt(usageMap.get("input_tokens"));
+        int outputTokens = toInt(usageMap.get("output_tokens"));
+        int promptTokens = toInt(usageMap.get("prompt_tokens"));
+        int completionTokens = toInt(usageMap.get("completion_tokens"));
+        return new LLMResponse.Usage(promptTokens, completionTokens, inputTokens + outputTokens, inputTokens, outputTokens);
+    }
+
+    private int toInt(Object val) {
+        return val instanceof Number ? ((Number) val).intValue() : 0;
     }
 
     private void parseChunk(Map<String, Object> chunk, Consumer<String> onChunk) {
@@ -175,8 +181,6 @@ public class ClaudeAdapter implements ProviderAdapter {
     }
 
     private LLMResponse createErrorResponse(String error) {
-        LLMResponse resp = new LLMResponse();
-        resp.setMessage(new Message(Message.Role.assistant, "Error: " + error));
-        return resp;
+        return new LLMResponse(null, new Message(Message.Role.assistant, "Error: " + error), "error", null, null, true, null, null, null);
     }
 }

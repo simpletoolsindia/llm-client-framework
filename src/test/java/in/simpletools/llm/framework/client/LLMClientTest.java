@@ -26,9 +26,9 @@ class LLMClientTest {
 
         assertNotNull(client.getCompactedContextSummary());
         assertTrue(client.getHistory().getMessages().stream()
-            .anyMatch(message -> message.getRole() == Message.Role.system
-                && message.getContent() != null
-                && message.getContent().contains("Conversation summary for continued context:")));
+            .anyMatch(message -> message.role() == Message.Role.system
+                && message.content() != null
+                && message.content().contains("Conversation summary for continued context:")));
     }
 
     @Test
@@ -85,16 +85,16 @@ class LLMClientTest {
     private static final class FakeProviderAdapter implements ProviderAdapter {
         @Override
         public LLMResponse chat(LLMRequest request) {
-            List<Message> messages = request.getMessages();
+            List<Message> messages = request.messages();
             String lastUserMessage = messages.stream()
-                .filter(message -> message.getRole() == Message.Role.user)
-                .map(Message::getContent)
+                .filter(message -> message.role() == Message.Role.user)
+                .map(Message::content)
                 .reduce((first, second) -> second)
                 .orElse("");
 
             boolean summaryRequest = messages.stream()
-                .filter(message -> message.getRole() == Message.Role.system)
-                .map(Message::getContent)
+                .filter(message -> message.role() == Message.Role.system)
+                .map(Message::content)
                 .filter(content -> content != null && content.contains("compressing a conversation"))
                 .findFirst()
                 .isPresent();
@@ -103,10 +103,7 @@ class LLMClientTest {
                 ? "Summary: preserve user travel preferences, constraints, and unresolved work."
                 : "Reply: " + lastUserMessage.substring(0, Math.min(lastUserMessage.length(), 40));
 
-            LLMResponse response = new LLMResponse();
-            response.setModel("gemma4:latest");
-            response.setMessage(new Message(Message.Role.assistant, content));
-            return response;
+            return new LLMResponse("gemma4:latest", new Message(Message.Role.assistant, content), "stop", null, null, true, null, null, null);
         }
 
         @Override

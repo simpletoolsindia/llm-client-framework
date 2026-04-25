@@ -1,108 +1,60 @@
 package in.simpletools.llm.framework.config;
 
-public class ClientConfig {
-    private Provider provider;
-    private String baseUrl;
-    private String model;
-    private String apiKey;
-    private Double temperature;
-    private Integer maxTokens;
-    private Double topP;
-    private Double frequencyPenalty;
-    private Double presencePenalty;
-    private String[] stopSequences;
-    private Double timeout;
-    private int connectTimeoutMs = 30_000;   // 30 seconds default
-    private int readTimeoutMs = 60_000;      // 60 seconds default
-    private boolean stream = true;
-
-    public ClientConfig() {}
+/**
+ * Immutable client configuration with fluent with-copy methods.
+ */
+public record ClientConfig(
+    Provider provider,
+    String baseUrl,
+    String model,
+    String apiKey,
+    Double temperature,
+    Integer maxTokens,
+    Double topP,
+    Double frequencyPenalty,
+    Double presencePenalty,
+    String[] stopSequences,
+    Double timeout,
+    int connectTimeoutMs,
+    int readTimeoutMs,
+    boolean stream
+) {
+    public ClientConfig {
+        if (stopSequences == null) stopSequences = new String[0];
+    }
 
     public static ClientConfig of(Provider provider) {
-        ClientConfig c = new ClientConfig();
-        c.provider = provider;
-        c.baseUrl = provider.getDefaultBaseUrl();
-        return c;
+        return new ClientConfig(provider, provider.getDefaultBaseUrl(), null, null,
+            null, null, null, null, null, new String[0], null,
+            30_000, 60_000, true);
     }
 
-    public Provider getProvider() { return provider; }
-    public ClientConfig provider(Provider p) { this.provider = p; return this; }
+    public ClientConfig provider(Provider p) { return new ClientConfig(p, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig baseUrl(String url) { return new ClientConfig(provider, url, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig model(String m) { return new ClientConfig(provider, baseUrl, m, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig apiKey(String key) { return new ClientConfig(provider, baseUrl, model, key, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig temperature(Double t) { return new ClientConfig(provider, baseUrl, model, apiKey, t, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig maxTokens(Integer m) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, m, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig topP(Double p) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, p, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig frequencyPenalty(Double p) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, p, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig presencePenalty(Double p) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, p, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig stop(String... s) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, s, timeout, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig timeout(Double seconds) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, seconds, connectTimeoutMs, readTimeoutMs, stream); }
+    public ClientConfig connectTimeoutMs(int ms) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, ms, readTimeoutMs, stream); }
+    public ClientConfig readTimeoutMs(int ms) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, ms, stream); }
 
-    public String getBaseUrl() { return baseUrl; }
-    public ClientConfig baseUrl(String url) { this.baseUrl = url; return this; }
-
-    public String getModel() { return model; }
-    public ClientConfig model(String m) { this.model = m; return this; }
-
-    public String getApiKey() { return apiKey; }
-    public ClientConfig apiKey(String key) { this.apiKey = key; return this; }
-
-    public Double getTemperature() { return temperature; }
-    public ClientConfig temperature(Double t) { this.temperature = t; return this; }
-
-    public Integer getMaxTokens() { return maxTokens; }
-    public ClientConfig maxTokens(Integer m) { this.maxTokens = m; return this; }
-
-    public Double getTopP() { return topP; }
-    public ClientConfig topP(Double p) { this.topP = p; return this; }
-
-    public Double getFrequencyPenalty() { return frequencyPenalty; }
-    public ClientConfig frequencyPenalty(Double p) { this.frequencyPenalty = p; return this; }
-
-    public Double getPresencePenalty() { return presencePenalty; }
-    public ClientConfig presencePenalty(Double p) { this.presencePenalty = p; return this; }
-
-    public String[] getStopSequences() { return stopSequences; }
-    public ClientConfig stop(String... s) { this.stopSequences = s; return this; }
-
-    public Double getTimeout() { return timeout; }
-    public ClientConfig timeout(Double seconds) { this.timeout = seconds; return this; }
-
-    public int getConnectTimeoutMs() { return connectTimeoutMs; }
-    public ClientConfig connectTimeoutMs(int ms) { this.connectTimeoutMs = ms; return this; }
-
-    public int getReadTimeoutMs() { return readTimeoutMs; }
-    public ClientConfig readTimeoutMs(int ms) { this.readTimeoutMs = ms; return this; }
-
-    /** Convenience: set both connect and read timeout at once (in seconds). */
     public ClientConfig timeoutSeconds(int seconds) {
-        this.connectTimeoutMs = seconds * 1000;
-        this.readTimeoutMs = seconds * 1000;
-        return this;
+        return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, seconds * 1000, seconds * 1000, stream);
     }
 
-    public boolean isStream() { return stream; }
-    public ClientConfig stream(boolean s) { this.stream = s; return this; }
+    public ClientConfig stream(boolean s) { return new ClientConfig(provider, baseUrl, model, apiKey, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stopSequences, timeout, connectTimeoutMs, readTimeoutMs, s); }
 
-    public ClientConfig ollama(String baseUrl, String model) {
-        return provider(Provider.OLLAMA).baseUrl(baseUrl).model(model);
-    }
-
-    public ClientConfig openAI(String model, String apiKey) {
-        return provider(Provider.OPENAI).model(model).apiKey(apiKey);
-    }
-
-    public ClientConfig claude(String model, String apiKey) {
-        return provider(Provider.ANTHROPIC).model(model).apiKey(apiKey);
-    }
-
-    public ClientConfig deepSeek(String model, String apiKey) {
-        return provider(Provider.DEEPSEEK).model(model).apiKey(apiKey);
-    }
-
-    public ClientConfig nvidia(String model, String apiKey) {
-        return provider(Provider.NVIDIA).model(model).apiKey(apiKey);
-    }
-
-    public ClientConfig openRouter(String model, String apiKey) {
-        return provider(Provider.OPENROUTER).model(model).apiKey(apiKey);
-    }
-
-    public ClientConfig lmStudio(String model) {
-        return provider(Provider.LM_STUDIO).model(model);
-    }
-
-    public ClientConfig vllm(String model) {
-        return provider(Provider.VLLM).model(model);
-    }
+    public ClientConfig ollama(String baseUrl, String model) { return provider(Provider.OLLAMA).baseUrl(baseUrl).model(model); }
+    public ClientConfig openAI(String model, String apiKey) { return provider(Provider.OPENAI).model(model).apiKey(apiKey); }
+    public ClientConfig claude(String model, String apiKey) { return provider(Provider.ANTHROPIC).model(model).apiKey(apiKey); }
+    public ClientConfig deepSeek(String model, String apiKey) { return provider(Provider.DEEPSEEK).model(model).apiKey(apiKey); }
+    public ClientConfig nvidia(String model, String apiKey) { return provider(Provider.NVIDIA).model(model).apiKey(apiKey); }
+    public ClientConfig openRouter(String model, String apiKey) { return provider(Provider.OPENROUTER).model(model).apiKey(apiKey); }
+    public ClientConfig lmStudio(String model) { return provider(Provider.LM_STUDIO).model(model); }
+    public ClientConfig vllm(String model) { return provider(Provider.VLLM).model(model); }
 }

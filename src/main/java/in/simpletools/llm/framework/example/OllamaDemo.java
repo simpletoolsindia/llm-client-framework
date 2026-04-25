@@ -123,7 +123,7 @@ public class OllamaDemo {
 
         System.out.println("History size: " + client.getHistory().size() + " messages");
         System.out.println("Last assistant message: " +
-            client.getHistory().getMessages().get(client.getHistory().size() - 1).getContent());
+            client.getHistory().getMessages().get(client.getHistory().size() - 1).content());
 
         client.clearHistory();
         System.out.println("After clear - History size: " + client.getHistory().size());

@@ -1,78 +1,28 @@
 package in.simpletools.llm.framework.tool;
 
+import in.simpletools.llm.framework.utils.Retry;
 import java.util.*;
 import java.lang.reflect.*;
 import java.util.function.Function;
 
 /**
  * Central registry for LLM tools with auto-registration and retry support.
- *
- * <p>Auto-register tools using the {@link LLMTool} annotation on any object:
- * <pre>
- * {@code
- * MyTools tools = new MyTools();
- * registry.registerAll(tools);  // finds all @LLMTool methods
- * }
- * </pre>
- *
- * <p>Or register manually with a lambda:
- * <pre>
- * {@code
- * registry.register("calc", "Evaluate math", args -> eval(args.get("expr")));
- * }
- * </pre>
  */
 public class ToolRegistry {
     private final Map<String, ToolInfo> tools = new HashMap<>();
 
-    /** Extended tool info with retry configuration. */
-    public static class ToolInfo {
-        private final String name;
-        private final String description;
-        private final Map<String, ParamInfo> params;
-        private final Function<Map<String, Object>, Object> handler;
-        private final Method method;
-        private final Object instance;
-        private final int maxRetries;
-        private final long retryDelayMs;
-        private final double backoffMultiplier;
-        private final long maxRetryDelayMs;
-
-        public ToolInfo(String name, String description, Map<String, ParamInfo> params,
-                        Function<Map<String, Object>, Object> handler,
-                        Method method, Object instance,
-                        int maxRetries, long retryDelayMs,
-                        double backoffMultiplier, long maxRetryDelayMs) {
-            this.name = name;
-            this.description = description;
-            this.params = params;
-            this.handler = handler;
-            this.method = method;
-            this.instance = instance;
-            this.maxRetries = maxRetries;
-            this.retryDelayMs = retryDelayMs;
-            this.backoffMultiplier = backoffMultiplier;
-            this.maxRetryDelayMs = maxRetryDelayMs;
-        }
-
-        /** Constructor for lambda-based tools with default retry. */
-        public ToolInfo(String name, String description, Map<String, ParamInfo> params,
-                        Function<Map<String, Object>, Object> handler) {
-            this(name, description, params, handler, null, null, 3, 500, 2.0, 10000);
-        }
-
-        public String getName() { return name; }
-        public String getDescription() { return description; }
-        public Map<String, ParamInfo> getParams() { return params; }
-        public int getMaxRetries() { return maxRetries; }
-
-        /**
-         * Invoke the tool with retry on failure.
-         * Uses exponential backoff between retries.
-         */
+    public record ToolInfo(
+        String name,
+        String description,
+        Map<String, ParamInfo> params,
+        Function<Map<String, Object>, Object> handler,
+        Method method,
+        Object instance,
+        Retry.RetryConfig retryConfig
+    ) {
         public Object invoke(Map<String, Object> args) throws Exception {
             if (handler != null) {
-                return invokeWithRetry(() -> handler.apply(args));
+                return Retry.withRetry(() -> handler.apply(args), retryConfig);
             }
 
             // Reflective invocation
@@ -84,62 +34,17 @@ public class ToolRegistry {
                 if (paramAnn != null && !paramAnn.name().isEmpty()) pName = paramAnn.name();
                 ps[i] = args.get(pName);
             }
-            try {
-                return invokeWithRetry(() -> {
-                    try { return method.invoke(instance, ps); }
-                    catch (IllegalAccessException e) { throw new RuntimeException(e); }
-                    catch (java.lang.reflect.InvocationTargetException e) {
-                        throw e.getCause() != null ? new RuntimeException(e.getCause()) : new RuntimeException(e);
-                    }
-                });
-            } catch (RuntimeException e) {
-                throw e instanceof Exception ? (Exception) e : new Exception(e.getMessage(), e);
-            }
-        }
-
-        private Object invokeWithRetry(java.util.function.Supplier<Object> action) throws Exception {
-            if (maxRetries <= 0) return action.get();
-
-            int attempt = 0;
-            long delay = retryDelayMs;
-            Exception lastException = null;
-
-            while (attempt < maxRetries) {
-                try {
-                    return action.get();
-                } catch (Exception e) {
-                    lastException = e;
-                    attempt++;
-                    if (attempt >= maxRetries) break;
-
-                    try { Thread.sleep(delay); }
-                    catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new Exception("Tool execution interrupted: " + e.getMessage(), e);
-                    }
-                    delay = Math.min((long)(delay * backoffMultiplier), maxRetryDelayMs);
+            return Retry.withRetry(() -> {
+                try { return method.invoke(instance, ps); }
+                catch (IllegalAccessException e) { throw new RuntimeException(e); }
+                catch (InvocationTargetException e) {
+                    throw e.getCause() != null ? new RuntimeException(e.getCause()) : new RuntimeException(e);
                 }
-            }
-            throw lastException != null ? lastException : new Exception("Tool execution failed");
+            }, retryConfig);
         }
     }
 
-    public static class ParamInfo {
-        private final String name;
-        private final String description;
-        private final boolean required;
-        private final Class<?> type;
-
-        public ParamInfo(String name, String description, boolean required, Class<?> type) {
-            this.name = name; this.description = description; this.required = required; this.type = type;
-        }
-
-        public String getName() { return name; }
-        public String getDescription() { return description; }
-        public boolean isRequired() { return required; }
-        public Class<?> getType() { return type; }
-
-        /** Infer JSON Schema type from Java class. */
+    public record ParamInfo(String name, String description, boolean required, Class<?> type) {
         public static String jsonType(Class<?> t) {
             String cn = t.getName();
             if (cn.equals("java.lang.String") || cn.equals("java.lang.Character")) return "string";
@@ -153,7 +58,6 @@ public class ToolRegistry {
 
     /**
      * Auto-register all methods annotated with {@link LLMTool} from a service object.
-     * Supports both {@link LLMTool} (new) and legacy {@link OllamaTool}.
      */
     public void registerAll(Object service) {
         for (Method m : service.getClass().getDeclaredMethods()) {
@@ -181,10 +85,10 @@ public class ToolRegistry {
             params.put(pName, new ParamInfo(pName, pDesc, pReq, p.getType()));
         }
 
-        tools.put(name, new ToolInfo(
-            name, desc, params, null, m, service,
-            ann.maxRetries(), ann.retryDelayMs(), ann.backoffMultiplier(), ann.maxRetryDelayMs()
-        ));
+        var retryConfig = new Retry.RetryConfig(
+            ann.maxRetries(), ann.retryDelayMs(), ann.backoffMultiplier(), ann.maxRetryDelayMs());
+
+        tools.put(name, new ToolInfo(name, desc, Map.copyOf(params), null, m, service, retryConfig));
     }
 
     private void registerFromLegacyAnnotation(Object service, Method m, OllamaTool ann) {
@@ -199,36 +103,33 @@ public class ToolRegistry {
             params.put(pName, new ParamInfo(pName, pDesc, paramAnn == null || paramAnn.required(), p.getType()));
         }
 
-        tools.put(name, new ToolInfo(name, desc, params, null, m, service, 3, 500, 2.0, 10000));
+        tools.put(name, new ToolInfo(name, desc, Map.copyOf(params), null, m, service, Retry.RetryConfig.defaults()));
     }
 
-    /**
-     * Register a tool using a lambda/Function.
-     * Retry uses defaults (3 attempts, 500ms initial delay, 2x backoff).
-     */
+    /** Register a tool using a lambda/Function. */
     public void register(String name, String description,
                          Function<Map<String, Object>, Object> handler,
                          Map<String, ParamInfo> params) {
-        tools.put(name, new ToolInfo(name, description, params, handler));
+        tools.put(name, new ToolInfo(name, description, Map.copyOf(params), handler,
+            null, null, Retry.RetryConfig.defaults()));
     }
 
-    /**
-     * Register a tool with full retry configuration.
-     */
+    /** Register a tool with full retry configuration. */
     public void register(String name, String description,
                          Function<Map<String, Object>, Object> handler,
                          Map<String, ParamInfo> params,
                          int maxRetries, long retryDelayMs,
                          double backoffMultiplier, long maxRetryDelayMs) {
-        tools.put(name, new ToolInfo(name, description, params, handler, null, null,
-            maxRetries, retryDelayMs, backoffMultiplier, maxRetryDelayMs));
+        var retryConfig = new Retry.RetryConfig(maxRetries, retryDelayMs, backoffMultiplier, maxRetryDelayMs);
+        tools.put(name, new ToolInfo(name, description, Map.copyOf(params), handler,
+            null, null, retryConfig));
     }
 
     /** Register a simple tool with no parameters. */
     public void register(String name, String description, Runnable runnable) {
         tools.put(name, new ToolInfo(name, description, Map.of(), args -> {
             runnable.run(); return "Done";
-        }));
+        }, null, null, Retry.RetryConfig.defaults()));
     }
 
     public ToolInfo get(String name) { return tools.get(name); }
