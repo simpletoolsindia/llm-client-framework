@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'in.simpletools'
-version = '1.0.3'
+version = '1.0.4'
 
 def isSnapshot = version.toString().endsWith('-SNAPSHOT')
 
@@ -30,13 +30,17 @@ dependencies {
     implementation 'javax.inject:javax.inject:1'
 
     compileOnly 'org.apache.commons:commons-lang3:3.14.0'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 application {
     mainClass = 'in.simpletools.llm.framework.example.OllamaDemo'
 }
 
-tasks.named('test') { useJUnit() }
+tasks.named('test') { useJUnitPlatform() }
 
 // ============ Publishing Configuration ============
 

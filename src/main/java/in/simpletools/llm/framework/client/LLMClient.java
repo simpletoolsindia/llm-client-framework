@@ -10,6 +10,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
 import java.time.Duration;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * High-performance functional LLM Client with async support, tool execution, and token tracking.
@@ -66,6 +68,8 @@ public class LLMClient {
     private int compactKeepLastMessages = 6;
     private String compactedContextSummary;
     private boolean compactingHistory;
+    private boolean manualContextWindowConfigured;
+    private static final int MAX_COMPACTION_ATTEMPTS = 3;
     private static final String COMPACTED_CONTEXT_PREFIX = "Conversation summary for continued context:\n";
     private static final String COMPACTION_SYSTEM_PROMPT = """
         You are compressing a conversation to preserve continuity in a limited context window.
@@ -335,7 +339,12 @@ public class LLMClient {
 
     // ========== History Management ==========
     public ConversationHistory getHistory() { return history; }
-    public LLMClient clearHistory() { history.clear(); tokenTracker.reset(); return this; }
+    public LLMClient clearHistory() {
+        history.clear();
+        tokenTracker.reset();
+        compactedContextSummary = null;
+        return this;
+    }
     public LLMClient clearLastN(int n) { history.clearLastN(n); return this; }
 
     /**
@@ -359,12 +368,16 @@ public class LLMClient {
             logger.warn("Failed to connect to Redis, using in-memory history: {}", e.getMessage());
             this.history = new RedisHistoryAdapter(RedisHistory.inMemory(conversationId));
         }
+        this.compactedContextSummary = extractCompactedSummary(this.history.getMessages());
+        syncTokenUsage(null);
         return this;
     }
 
     /** Use in-memory history (default). */
     public LLMClient withMemoryHistory() {
         this.history = new ConversationHistory();
+        this.compactedContextSummary = null;
+        this.tokenTracker.reset();
         return this;
     }
 
@@ -396,7 +409,7 @@ public class LLMClient {
         this.tools.clear(); this.tools.addAll(tools); return this;
     }
     public LLMClient withRetry(RetryConfig config) {
-        return new LLMClient(adapter, this.config, this.history, toolRegistry, tools, config, executor, logger, tokenTracker);
+        return copyStateTo(new LLMClient(adapter, this.config, this.history, toolRegistry, tools, config, executor, logger, tokenTracker));
     }
     public LLMClient withRetry(int maxAttempts) {
         return withRetry(new RetryConfig(maxAttempts, Duration.ofMillis(500), 2.0, Duration.ofSeconds(10)));
@@ -424,6 +437,7 @@ public class LLMClient {
     }
     public LLMClient withContextWindow(long contextWindowTokens) {
         tokenTracker.setModel(config.getModel(), contextWindowTokens);
+        manualContextWindowConfigured = true;
         return this;
     }
     public LLMClient setLogLevel(SimpleLogger.Level level) {
@@ -463,21 +477,17 @@ public class LLMClient {
             .toList();
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-            .thenApply(v -> {
-                StringBuilder results = new StringBuilder();
-                futures.forEach(f -> {
-                    try { results.append(f.get()).append("\n"); }
-                    catch (Exception e) { results.append("Error: ").append(e.getMessage()).append("\n"); }
-                });
-                return results.toString().trim();
-            })
+            .thenApply(v -> IntStream.range(0, futures.size())
+                .mapToObj(index -> getFutureResult(futures.get(index)))
+                .toList())
             .thenCompose(results -> {
-                calls.forEach(call -> {
-                    Message toolMsg = Message.ofTool(results);
-                    toolMsg.setName(call.getFunction().getName());
+                IntStream.range(0, calls.size()).forEach(index -> {
+                    ToolCall call = calls.get(index);
+                    Message toolMsg = Message.ofTool(results.get(index));
+                    toolMsg.setName(call.getFunction() != null ? call.getFunction().getName() : null);
                     history.add(toolMsg);
                 });
-                tokenTracker.recordTool(results);
+                syncTokenUsage(null);
                 return continueConversation();
             });
     }
@@ -543,16 +553,12 @@ public class LLMClient {
 
     // ========== Request Building ==========
     private LLMRequest buildRequestFromHistory(Map<String, String> options) {
-        List<Message> requestMessages = new ArrayList<>();
-        if (options.get("system") != null && !options.get("system").isBlank()) {
-            requestMessages.add(Message.ofSystem(options.get("system")));
-        }
-        requestMessages.addAll(history.getMessages());
+        List<Message> requestMessages = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
         return LLMRequest.builder()
             .model(config.getModel())
             .stream(config.isStream())
             .messages(requestMessages)
-            .temperature(options.get("temperature") != null ? Double.parseDouble(options.get("temperature")) : null)
+            .temperature(parseTemperature(options))
             .tools(tools.isEmpty() ? null : tools)
             .build();
     }
@@ -579,7 +585,10 @@ public class LLMClient {
     private void syncTokenUsage(LLMResponse response) {
         List<Message> currentMessages = history.getMessages();
         if (response != null && response.getModel() != null) {
-            tokenTracker.setModel(response.getModel(), TokenTracker.detectLimitForModel(response.getModel()));
+            long contextLimit = manualContextWindowConfigured
+                ? tokenTracker.getModelLimit()
+                : TokenTracker.detectLimitForModel(response.getModel());
+            tokenTracker.setModel(response.getModel(), contextLimit);
         } else if (config.getModel() != null && tokenTracker.getModel() == null) {
             tokenTracker.setModel(config.getModel(), TokenTracker.detectLimitForModel(config.getModel()));
         }
@@ -594,10 +603,7 @@ public class LLMClient {
     private void ensureContextCapacity(List<Message> pendingMessages, Map<String, String> options) {
         if (!autoCompactEnabled || compactingHistory) return;
 
-        List<Message> projected = new ArrayList<>(history.getMessages());
-        if (options.get("system") != null && !options.get("system").isBlank()) {
-            projected.add(0, Message.ofSystem(options.get("system")));
-        }
+        List<Message> projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
         projected.addAll(pendingMessages);
 
         TokenTracker.ContextInfo projectedInfo = estimateContextInfo(projected);
@@ -617,11 +623,8 @@ public class LLMClient {
     }
 
     private void compactHistoryUntilWithinTarget(Map<String, String> options, List<Message> pendingMessages) {
-        for (int attempt = 0; attempt < 3; attempt++) {
-            List<Message> projected = new ArrayList<>(history.getMessages());
-            if (options.get("system") != null && !options.get("system").isBlank()) {
-                projected.add(0, Message.ofSystem(options.get("system")));
-            }
+        for (int attempt = 0; attempt < MAX_COMPACTION_ATTEMPTS; attempt++) {
+            List<Message> projected = new ArrayList<>(prependSystemMessage(history.getMessages(), options));
             projected.addAll(pendingMessages);
 
             TokenTracker.ContextInfo info = estimateContextInfo(projected);
@@ -695,37 +698,80 @@ public class LLMClient {
     }
 
     private String formatTranscript(List<Message> messages) {
-        StringBuilder transcript = new StringBuilder();
-        for (Message message : messages) {
-            String content = message.getContent();
-            if ((content == null || content.isBlank()) && (message.getToolCalls() == null || message.getToolCalls().isEmpty())) {
-                continue;
-            }
+        return messages.stream()
+            .map(this::formatTranscriptMessage)
+            .filter(line -> !line.isBlank())
+            .collect(Collectors.joining("\n\n"))
+            .trim();
+    }
 
-            transcript.append(message.getRole().name().toUpperCase());
-            if (message.getName() != null && !message.getName().isBlank()) {
-                transcript.append(" (").append(message.getName()).append(")");
-            }
-            transcript.append(": ");
+    private String formatTranscriptMessage(Message message) {
+        String content = message.getContent();
+        boolean hasToolCalls = message.getToolCalls() != null && !message.getToolCalls().isEmpty();
+        if ((content == null || content.isBlank()) && !hasToolCalls) return "";
 
-            if (content != null && !content.isBlank()) {
-                transcript.append(content);
-            }
-
-            if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
-                if (content != null && !content.isBlank()) transcript.append("\n");
-                for (ToolCall call : message.getToolCalls()) {
-                    transcript.append("Tool call -> ")
-                        .append(call.getFunction() != null ? call.getFunction().getName() : "unknown")
-                        .append(" ")
-                        .append(call.getFunction() != null ? call.getFunction().getArguments() : Map.of())
-                        .append("\n");
-                }
-            }
-
-            transcript.append("\n\n");
+        StringBuilder line = new StringBuilder(message.getRole().name().toUpperCase());
+        if (message.getName() != null && !message.getName().isBlank()) {
+            line.append(" (").append(message.getName()).append(")");
         }
-        return transcript.toString().trim();
+        line.append(": ");
+
+        if (content != null && !content.isBlank()) line.append(content);
+        if (hasToolCalls) {
+            String toolLines = message.getToolCalls().stream()
+                .map(call -> "Tool call -> "
+                    + (call.getFunction() != null ? call.getFunction().getName() : "unknown")
+                    + " "
+                    + (call.getFunction() != null ? call.getFunction().getArguments() : Map.of()))
+                .collect(Collectors.joining("\n"));
+            if (content != null && !content.isBlank()) line.append("\n");
+            line.append(toolLines);
+        }
+        return line.toString();
+    }
+
+    private List<Message> prependSystemMessage(List<Message> messages, Map<String, String> options) {
+        String system = options.get("system");
+        if (system == null || system.isBlank()) return messages;
+
+        List<Message> requestMessages = new ArrayList<>();
+        requestMessages.add(Message.ofSystem(system));
+        requestMessages.addAll(messages);
+        return requestMessages;
+    }
+
+    private Double parseTemperature(Map<String, String> options) {
+        String temperature = options.get("temperature");
+        return temperature != null ? Double.parseDouble(temperature) : null;
+    }
+
+    private String getFutureResult(CompletableFuture<String> future) {
+        try {
+            return future.get();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    private String extractCompactedSummary(List<Message> messages) {
+        return messages.stream()
+            .filter(message -> message.getRole() == Message.Role.system)
+            .map(Message::getContent)
+            .filter(Objects::nonNull)
+            .filter(content -> content.startsWith(COMPACTED_CONTEXT_PREFIX))
+            .map(content -> content.substring(COMPACTED_CONTEXT_PREFIX.length()))
+            .reduce((first, second) -> second)
+            .orElse(null);
+    }
+
+    private LLMClient copyStateTo(LLMClient target) {
+        target.autoCompactEnabled = autoCompactEnabled;
+        target.autoCompactTriggerPercent = autoCompactTriggerPercent;
+        target.autoCompactTargetPercent = autoCompactTargetPercent;
+        target.compactKeepLastMessages = compactKeepLastMessages;
+        target.compactedContextSummary = compactedContextSummary;
+        target.manualContextWindowConfigured = manualContextWindowConfigured;
+        return target;
     }
 
     // ========== Tool Conversion ==========

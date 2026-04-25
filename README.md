@@ -11,7 +11,7 @@ Unified Java client for local and cloud LLM providers with one API, built-in too
 Current release:
 
 ```text
-in.simpletools:llm-client-framework:1.0.3
+in.simpletools:llm-client-framework:1.0.4
 ```
 
 ## What This Framework Gives You
@@ -120,7 +120,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.3'
+    implementation 'in.simpletools:llm-client-framework:1.0.4'
 }
 ```
 
@@ -130,7 +130,7 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
 </dependency>
 ```
 
@@ -148,7 +148,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.3'
+    implementation 'in.simpletools:llm-client-framework:1.0.4'
 }
 
 application {
