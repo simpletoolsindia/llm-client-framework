@@ -29,7 +29,7 @@ public enum Provider {
     public boolean requiresApiKey() { return requiresApiKey; }
     public boolean isCloud() { return requiresApiKey && !defaultBaseUrl.contains("localhost"); }
     public boolean isLocal() { return !requiresApiKey || defaultBaseUrl.contains("localhost"); }
-    public boolean supportsTools() { return this != ANTHROPIC; }
+    public boolean supportsTools() { return true; }
     public boolean supportsVision() {
         return this == OPENAI || this == OLLAMA || this == ANTHROPIC ||
                this == DEEPSEEK || this == NVIDIA || this == OPENROUTER;

@@ -81,7 +81,7 @@ public class OllamaDemo {
         System.out.println("-".repeat(40));
 
         // Register calculator tool
-        client.registerTool(
+        client.tool(
             "calculate",
             "Evaluates a mathematical expression and returns the result",
             args -> {

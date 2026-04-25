@@ -241,18 +241,18 @@ public class SystemTools {
 
     /**
      * Find all files matching a glob pattern within a directory tree.
-     * Supports patterns like star.java (any extension) and dot patterns.
+     * Supports patterns like "*.java", "star-star/*.txt", "src/star-star/*.java".
      *
      * @param path    root directory to search from
-     * @param pattern glob pattern for files (e.g., dot java)
+     * @param pattern glob pattern (e.g., "*.java", "star-star-slash*.md")
      * @return list of matching file paths, one per line
      */
     @LLMTool(name = "find_files",
             description = "Recursively find all files matching a glob pattern in a directory tree. " +
-                    "Examples: *.java finds all Java files, **/*.txt finds all text files.")
+                    "Examples: *.java finds all Java files, star-star/*.txt finds all text files.")
     public static String findFiles(
             @ToolParam(name = "path", description = "Root directory to search from") String path,
-            @ToolParam(name = "pattern", description = "Glob pattern for files") String pattern) {
+            @ToolParam(name = "pattern", description = "Glob pattern (e.g., *.java, star-star/*.txt, *.md)") String pattern) {
         try {
             Path root = Paths.get(path);
             if (!Files.exists(root)) {
@@ -260,8 +260,8 @@ public class SystemTools {
             }
 
             StringBuilder sb = new StringBuilder();
-            int count = 0;
             int maxResults = 500;
+            int[] count = {0};
 
             try (var walk = Files.walk(root)) {
                 walk.filter(Files::isRegularFile)
@@ -269,11 +269,11 @@ public class SystemTools {
                     .limit(maxResults)
                     .forEach(p -> {
                         sb.append(p.toAbsolutePath()).append("\n");
-                        count++;
+                        count[0]++;
                     });
             }
 
-            if (count == 0) {
+            if (count[0] == 0) {
                 return "No files matching pattern '" + pattern + "' found in " + path;
             }
             return sb.toString().trim();

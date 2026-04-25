@@ -20,7 +20,7 @@ public class Main {
         // Example 2: With Tools
         System.out.println("\n--- 2. With Calculator Tool ---");
         LLMClient clientWithTools = LLMClientFactory.ollama("gemma4:latest");
-        clientWithTools.registerTool("calculate", "Evaluate math expression",
+        clientWithTools.tool("calculate", "Evaluate math expression",
             argsMap -> {
                 String expr = (String) argsMap.get("expression");
                 try {

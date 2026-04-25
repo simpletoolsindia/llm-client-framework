@@ -115,16 +115,52 @@ public class ClaudeAdapter implements ProviderAdapter {
         resp.setDone(true);
         Object stop = data.get("stop_reason");
         if (stop != null) resp.setFinishReason(stop.toString());
+
+        // Extract usage data
+        Object usageObj = data.get("usage");
+        if (usageObj instanceof Map) {
+            LLMResponse.Usage usage = new LLMResponse.Usage();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> usageMap = (Map<String, Object>) usageObj;
+            if (usageMap.get("input_tokens") != null)
+                usage.setInputTokens(((Number) usageMap.get("input_tokens")).intValue());
+            if (usageMap.get("output_tokens") != null)
+                usage.setOutputTokens(((Number) usageMap.get("output_tokens")).intValue());
+            if (usageMap.get("prompt_tokens") != null)
+                usage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
+            if (usageMap.get("completion_tokens") != null)
+                usage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
+            resp.setUsage(usage);
+        }
+
+        // Extract content blocks (text and tool_use)
+        List<ToolCall> toolCalls = new ArrayList<>();
+        StringBuilder textContent = new StringBuilder();
         Object content = data.get("content");
         if (content instanceof List) {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> blocks = (List<Map<String, Object>>) content;
             for (Map<String, Object> block : blocks) {
                 if ("text".equals(block.get("type"))) {
-                    resp.setMessage(new Message(Message.Role.assistant, (String) block.get("text")));
+                    String text = (String) block.get("text");
+                    if (text != null) textContent.append(text);
+                } else if ("tool_use".equals(block.get("type"))) {
+                    ToolCall tc = new ToolCall();
+                    tc.setId((String) block.get("id"));
+                    ToolCall.Function fn = new ToolCall.Function();
+                    fn.setName((String) block.get("name"));
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> input = (Map<String, Object>) block.get("input");
+                    fn.setArguments(input != null ? input : new java.util.HashMap<>());
+                    tc.setFunction(fn);
+                    toolCalls.add(tc);
                 }
             }
         }
+
+        Message message = new Message(Message.Role.assistant, textContent.toString());
+        if (!toolCalls.isEmpty()) message.setToolCalls(toolCalls);
+        resp.setMessage(message);
         return resp;
     }
 

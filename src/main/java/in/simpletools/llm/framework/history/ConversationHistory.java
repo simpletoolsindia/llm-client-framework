@@ -83,6 +83,9 @@ public class ConversationHistory {
     /** Number of messages currently in history. */
     public int size() { return messages.size(); }
 
+    /** Conversation ID placeholder for ConversationHistoryStore interface. */
+    public String getConversationId() { return "in-memory"; }
+
     /** Trim oldest messages if over limit. */
     private void trim() { while (messages.size() > maxHistory) messages.remove(0); }
 }

@@ -42,6 +42,7 @@ public class RedisHistory implements ConversationHistoryStore {
     private final Map<String, String> metadata;
     private final Gson gson;
     private JedisWrapper jedis;
+    private boolean httpMode = false;
 
     private static final int DEFAULT_TTL_HOURS = 24;
 
@@ -57,15 +58,38 @@ public class RedisHistory implements ConversationHistoryStore {
     /** Create using actual Jedis library (requires jedis dependency). */
     public static RedisHistory withJedis(String host, int port, String conversationId) {
         RedisHistory h = new RedisHistory(host, port, conversationId);
-        h.jedis = new JedisWrapper() {
-            private final redis.clients.jedis.Jedis j = new redis.clients.jedis.Jedis(host, port);
-            @Override public String get(String k) { return j.get(k); }
-            @Override public String set(String k, String v) { return j.set(k, v); }
-            @Override public String setex(String k, long s, String v) { return j.setex(k, s, v); }
-            @Override public long expire(String k, long s) { return j.expire(k, s); }
-            @Override public long del(String k) { return j.del(k); }
-            @Override public boolean ping() { try { j.ping(); return true; } catch(Exception e) { return false; } }
-        };
+        try {
+            Class<?> jedisClass = Class.forName("redis.clients.jedis.Jedis");
+            Object jedis = jedisClass.getConstructor(String.class, int.class).newInstance(host, port);
+            h.jedis = new JedisWrapper() {
+                @Override public String get(String k) {
+                    try { return (String) jedisClass.getMethod("get", String.class).invoke(jedis, k); }
+                    catch (Exception e) { return null; }
+                }
+                @Override public String set(String k, String v) {
+                    try { return (String) jedisClass.getMethod("set", String.class, String.class).invoke(jedis, k, v); }
+                    catch (Exception e) { return null; }
+                }
+                @Override public String setex(String k, long s, String v) {
+                    try { return (String) jedisClass.getMethod("setex", String.class, long.class, String.class).invoke(jedis, k, s, v); }
+                    catch (Exception e) { return null; }
+                }
+                @Override public long expire(String k, long s) {
+                    try { return (Long) jedisClass.getMethod("expire", String.class, long.class).invoke(jedis, k, s); }
+                    catch (Exception e) { return 0; }
+                }
+                @Override public long del(String k) {
+                    try { return (Long) jedisClass.getMethod("del", String.class).invoke(jedis, k); }
+                    catch (Exception e) { return 0; }
+                }
+                @Override public boolean ping() {
+                    try { jedisClass.getMethod("ping").invoke(jedis); return true; }
+                    catch (Exception e) { return false; }
+                }
+            };
+        } catch (Exception e) {
+            log.error("Jedis not available: {}. Use inMemory() or withHttp() instead.", e.getMessage());
+        }
         return h;
     }
 
@@ -86,8 +110,8 @@ public class RedisHistory implements ConversationHistoryStore {
 
     /** Create using HTTP API (e.g., Redis on a remote server with REST interface). */
     public static RedisHistory withHttp(String redisUrl, String conversationId) {
-        RedisHistory h = new RedisHistory(redisUrl, 0, conversationId);
-        h.redisHost = redisUrl;
+        RedisHistory h = new RedisHistory("http", 0, conversationId);
+        h.httpMode = true;
         h.jedis = new JedisWrapper() {
             private final java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
             @Override public String get(String k) { return httpReq("GET", k, null); }
@@ -98,12 +122,16 @@ public class RedisHistory implements ConversationHistoryStore {
             @Override public boolean ping() { return true; }
             private String httpReq(String cmd, String k, String v) {
                 try {
-                    var b = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(redisUrl + "/" + cmd + "/" + k + (v != null ? "/" + v : "")))
-                        .GET();
-                    if ("POST".equals(cmd) || "SET".equals(cmd)) b = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(redisUrl + "/SET/" + k + "/" + v))
-                        .POST(HttpRequest.BodyPublishers.ofString(v));
+                    java.net.http.HttpRequest.Builder b;
+                    if ("POST".equals(cmd) || "SET".equals(cmd) || "SETEX".equals(cmd)) {
+                        b = java.net.http.HttpRequest.newBuilder()
+                            .uri(java.net.URI.create(redisUrl + "/SET/" + k + "/" + (v != null ? v : "")))
+                            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(v != null ? v : ""));
+                    } else {
+                        b = java.net.http.HttpRequest.newBuilder()
+                            .uri(java.net.URI.create(redisUrl + "/" + cmd + "/" + k))
+                            .GET();
+                    }
                     var r = client.send(b.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
                     return r.body();
                 } catch (Exception e) { return null; }
@@ -257,17 +285,20 @@ public class RedisHistory implements ConversationHistoryStore {
         return listConversations(host, port, "llm:history:*");
     }
 
-    /** List conversation IDs matching a pattern. */
+    /** List conversation IDs matching a pattern. Requires Jedis on classpath. */
     public static List<String> listConversations(String host, int port, String pattern) {
         List<String> ids = new ArrayList<>();
         try {
-            var j = new redis.clients.jedis.Jedis(host, port);
-            var keys = j.keys(pattern);
-            for (String k : keys) {
-                ids.add(k.replace("llm:history:", ""));
+            Class<?> jedisClass = Class.forName("redis.clients.jedis.Jedis");
+            Object j = jedisClass.getConstructor(String.class, int.class).newInstance(host, port);
+            Object keys = jedisClass.getMethod("keys", String.class).invoke(j, pattern);
+            for (Object k : (Iterable<?>) keys) {
+                ids.add(k.toString().replace("llm:history:", ""));
             }
-            j.close();
-        } catch (Exception ignored) {}
+            jedisClass.getMethod("close").invoke(j);
+        } catch (Exception e) {
+            throw new UnsupportedOperationException("Jedis not on classpath. Use inMemory() or withHttp() instead.", e);
+        }
         return ids;
     }
 

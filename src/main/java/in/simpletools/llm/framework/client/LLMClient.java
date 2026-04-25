@@ -92,7 +92,7 @@ public class LLMClient {
         public Builder config(ClientConfig config) { this.config = config; return this; }
         public Builder history(ConversationHistory h) { this.history = h; return this; }
         public Builder history(ConversationHistoryStore h) {
-            this.history = new ConversationHistoryAdapter(h); return this;
+            this.history = new RedisHistoryAdapter(h); return this;
         }
         public Builder tools(List<Tool> t) { this.tools = t; return this; }
         public Builder retry(RetryConfig r) { this.retryConfig = r; return this; }
@@ -299,11 +299,19 @@ public class LLMClient {
     }
 
     public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError) {
+        StringBuilder response = new StringBuilder();
         CompletableFuture.runAsync(() -> {
             try {
                 history.addUser(message);
                 LLMRequest request = buildRequest(message, Map.of());
-                adapter.streamChat(request, onToken);
+                adapter.streamChat(request, token -> {
+                    response.append(token);
+                    onToken.accept(token);
+                });
+                // Add assistant response to history after streaming completes
+                String fullResponse = response.toString();
+                history.addAssistant(fullResponse);
+                tokenTracker.recordAssistant(fullResponse);
             } catch (Exception e) {
                 onError.accept(e.getMessage());
                 logger.error("Stream failed: {}", e.getMessage());

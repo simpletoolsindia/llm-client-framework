@@ -84,7 +84,17 @@ public class ToolRegistry {
                 if (paramAnn != null && !paramAnn.name().isEmpty()) pName = paramAnn.name();
                 ps[i] = args.get(pName);
             }
-            return invokeWithRetry(() -> method.invoke(instance, ps));
+            try {
+                return invokeWithRetry(() -> {
+                    try { return method.invoke(instance, ps); }
+                    catch (IllegalAccessException e) { throw new RuntimeException(e); }
+                    catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause() != null ? new RuntimeException(e.getCause()) : new RuntimeException(e);
+                    }
+                });
+            } catch (RuntimeException e) {
+                throw e instanceof Exception ? (Exception) e : new Exception(e.getMessage(), e);
+            }
         }
 
         private Object invokeWithRetry(java.util.function.Supplier<Object> action) throws Exception {
