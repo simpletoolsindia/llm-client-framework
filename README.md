@@ -13,6 +13,17 @@
 | **Local (Free)** | Ollama, LM Studio, vLLM, Jan |
 | **Cloud (API Key)** | OpenAI, Claude, DeepSeek, NVIDIA NIM, Groq, Mistral, OpenRouter |
 
+## Related Tools
+
+### Project Generator
+Create Next.js projects instantly with custom packages.
+
+[**Web UI**](https://simpletoolsindia.github.io/project-generator) | [**CLI**](#cli)
+```bash
+npx @simpletoolsindia/project-generator my-app
+npx @simpletoolsindia/project-generator my-app --packages prisma,next-auth
+```
+
 ---
 
 ## Quick Start
@@ -438,6 +449,22 @@ curl http://localhost:11434/api/tags
 - **OpenAI**: https://platform.openai.com/api-keys
 - **Claude**: https://console.anthropic.com/settings/keys
 - **DeepSeek**: https://platform.deepseek.com/api_keys
+
+### CLI
+
+```bash
+# Install globally
+npm install -g @simpletoolsindia/project-generator
+
+# Create a Next.js project
+project-generator my-app
+
+# With packages
+project-generator my-app --packages prisma,next-auth,tailwindcss
+
+# Interactive mode
+project-generator
+```
 
 ---
 
