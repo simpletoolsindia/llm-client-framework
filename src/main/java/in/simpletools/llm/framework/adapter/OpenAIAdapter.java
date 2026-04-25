@@ -124,6 +124,23 @@ public class OpenAIAdapter implements ProviderAdapter {
             Map<String, Object> msgMap = (Map<String, Object>) choice.get("message");
             if (msgMap != null) resp.setMessage(Message.fromMap(msgMap));
         }
+        Object usageObj = data.get("usage");
+        if (usageObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> usageMap = (Map<String, Object>) usageObj;
+            LLMResponse.Usage usage = new LLMResponse.Usage();
+            if (usageMap.get("prompt_tokens") != null)
+                usage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
+            if (usageMap.get("completion_tokens") != null)
+                usage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
+            if (usageMap.get("total_tokens") != null)
+                usage.setTotalTokens(((Number) usageMap.get("total_tokens")).intValue());
+            if (usageMap.get("input_tokens") != null)
+                usage.setInputTokens(((Number) usageMap.get("input_tokens")).intValue());
+            if (usageMap.get("output_tokens") != null)
+                usage.setOutputTokens(((Number) usageMap.get("output_tokens")).intValue());
+            resp.setUsage(usage);
+        }
         resp.setDone(true);
         return resp;
     }

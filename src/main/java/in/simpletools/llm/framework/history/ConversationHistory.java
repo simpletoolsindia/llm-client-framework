@@ -60,6 +60,13 @@ public class ConversationHistory {
     /** Get a copy of all messages. */
     public List<Message> getMessages() { return new ArrayList<>(messages); }
 
+    /** Replace the full conversation history. */
+    public void replaceAll(List<Message> newMessages) {
+        messages.clear();
+        if (newMessages != null) messages.addAll(newMessages);
+        trim();
+    }
+
     /**
      * Get the last N messages.
      * @param count number of messages to retrieve

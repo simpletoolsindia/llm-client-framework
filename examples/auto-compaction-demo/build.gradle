@@ -1,0 +1,24 @@
+plugins {
+    id 'application'
+}
+
+group = 'in.simpletools.examples'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'in.simpletools:llm-client-framework:1.0.3'
+}
+
+application {
+    mainClass = 'demo.AutoCompactionDemoApp'
+}

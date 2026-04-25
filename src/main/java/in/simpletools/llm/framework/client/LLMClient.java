@@ -60,6 +60,25 @@ public class LLMClient {
     private RetryConfig retryConfig;
     private final ExecutorService executor;
     private TokenTracker tokenTracker;
+    private boolean autoCompactEnabled = true;
+    private double autoCompactTriggerPercent = 85.0;
+    private double autoCompactTargetPercent = 55.0;
+    private int compactKeepLastMessages = 6;
+    private String compactedContextSummary;
+    private boolean compactingHistory;
+    private static final String COMPACTED_CONTEXT_PREFIX = "Conversation summary for continued context:\n";
+    private static final String COMPACTION_SYSTEM_PROMPT = """
+        You are compressing a conversation to preserve continuity in a limited context window.
+        Extract only durable information that matters for future turns.
+        Keep:
+        - user goals and preferences
+        - important facts and constraints
+        - key decisions already made
+        - unresolved questions or pending tasks
+        - important tool outputs or retrieved facts
+        Remove chatter, repetition, and temporary filler.
+        Return a compact continuation summary in plain text.
+        """;
 
     // ========== Retry Configuration Record ==========
     public record RetryConfig(
@@ -124,7 +143,7 @@ public class LLMClient {
         this.retryConfig = retryConfig;
         this.executor = executor;
         this.logger = logger;
-        this.tokenTracker = tokenTracker != null ? tokenTracker : new TokenTracker(config.getModel(), TokenTracker.getLimitForModel(config.getModel()));
+        this.tokenTracker = tokenTracker != null ? tokenTracker : new TokenTracker(config.getModel(), TokenTracker.detectLimitForModel(config.getModel()));
     }
 
     // ========== Easy Tool Registration (Simplified API) ==========
@@ -279,18 +298,11 @@ public class LLMClient {
     public CompletableFuture<String> chatAsync(String message) { return chatAsync(message, Map.of()); }
 
     public CompletableFuture<String> chatAsync(String message, Map<String, String> options) {
-        return CompletableFuture.supplyAsync(() -> {
-            history.addUser(message);
-            tokenTracker.recordUser(message);
-            return processMessage(message, options);
-        }, executor);
+        return CompletableFuture.supplyAsync(() -> processUserMessage(Message.ofUser(message), options), executor);
     }
 
     public CompletableFuture<String> chatAsync(Message message) {
-        return CompletableFuture.supplyAsync(() -> {
-            history.add(message);
-            return processMessageObject(message);
-        }, executor);
+        return CompletableFuture.supplyAsync(() -> processUserMessage(message, Map.of()), executor);
     }
 
     // ========== Streaming Chat ==========
@@ -302,8 +314,9 @@ public class LLMClient {
         StringBuilder response = new StringBuilder();
         CompletableFuture.runAsync(() -> {
             try {
+                ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
                 history.addUser(message);
-                LLMRequest request = buildRequest(message, Map.of());
+                LLMRequest request = buildRequestFromHistory(Map.of());
                 adapter.streamChat(request, token -> {
                     response.append(token);
                     onToken.accept(token);
@@ -311,7 +324,8 @@ public class LLMClient {
                 // Add assistant response to history after streaming completes
                 String fullResponse = response.toString();
                 history.addAssistant(fullResponse);
-                tokenTracker.recordAssistant(fullResponse);
+                syncTokenUsage(null);
+                compactHistoryIfNeeded(Map.of());
             } catch (Exception e) {
                 onError.accept(e.getMessage());
                 logger.error("Stream failed: {}", e.getMessage());
@@ -359,8 +373,18 @@ public class LLMClient {
     /** Get current context window usage info. */
     public TokenTracker.ContextInfo getContextInfo() { return tokenTracker.getContextInfo(); }
 
+    /** Estimate context usage if one more user message is added. */
+    public TokenTracker.ContextInfo getProjectedContextInfo(String nextUserMessage) {
+        List<Message> projected = new ArrayList<>(history.getMessages());
+        projected.add(Message.ofUser(nextUserMessage));
+        return estimateContextInfo(projected);
+    }
+
     /** Get the token tracker for detailed usage. */
     public TokenTracker getTokenTracker() { return tokenTracker; }
+
+    /** Latest compacted conversation summary used to reduce context size. */
+    public String getCompactedContextSummary() { return compactedContextSummary; }
 
     /** Print context info to stdout. */
     public void printContextInfo() {
@@ -377,18 +401,48 @@ public class LLMClient {
     public LLMClient withRetry(int maxAttempts) {
         return withRetry(new RetryConfig(maxAttempts, Duration.ofMillis(500), 2.0, Duration.ofSeconds(10)));
     }
+    public LLMClient withAutoCompaction() {
+        this.autoCompactEnabled = true;
+        return this;
+    }
+    public LLMClient withAutoCompaction(double triggerPercent, double targetPercent) {
+        this.autoCompactEnabled = true;
+        this.autoCompactTriggerPercent = triggerPercent;
+        this.autoCompactTargetPercent = targetPercent;
+        return this;
+    }
+    public LLMClient withAutoCompaction(double triggerPercent, double targetPercent, int keepLastMessages) {
+        this.autoCompactEnabled = true;
+        this.autoCompactTriggerPercent = triggerPercent;
+        this.autoCompactTargetPercent = targetPercent;
+        this.compactKeepLastMessages = keepLastMessages;
+        return this;
+    }
+    public LLMClient withoutAutoCompaction() {
+        this.autoCompactEnabled = false;
+        return this;
+    }
+    public LLMClient withContextWindow(long contextWindowTokens) {
+        tokenTracker.setModel(config.getModel(), contextWindowTokens);
+        return this;
+    }
     public LLMClient setLogLevel(SimpleLogger.Level level) {
         logger.setLevel(level); return this;
     }
     public SimpleLogger getLogger() { return logger; }
 
     // ========== Core Processing ==========
-    private String processMessage(String message, Map<String, String> options) {
-        logger.debug("Processing message: {} chars", message.length());
-        LLMRequest request = buildRequest(message, options);
-        LLMResponse response = adapter.chat(request);
+    private String processUserMessage(Message message, Map<String, String> options) {
+        ensureContextCapacity(List.of(message), options);
+        history.add(message);
+        syncTokenUsage(null);
+        return processCurrentConversation(options);
+    }
 
-        if (tokenTracker != null) tokenTracker.updateFromUsage(response);
+    private String processCurrentConversation(Map<String, String> options) {
+        logger.debug("Processing conversation with {} messages", history.size());
+        LLMRequest request = buildRequestFromHistory(options);
+        LLMResponse response = adapter.chat(request);
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
@@ -396,27 +450,9 @@ public class LLMClient {
         }
         String reply = response.getContentOrEmpty();
         history.addAssistant(reply);
-        tokenTracker.recordAssistant(reply);
+        syncTokenUsage(response);
+        compactHistoryIfNeeded(options);
         logger.debug("Response: {} chars", reply.length());
-        return reply;
-    }
-
-    private String processMessageObject(Message message) {
-        LLMRequest request = LLMRequest.builder()
-            .model(config.getModel())
-            .messages(new ArrayList<>(history.getMessages()))
-            .addMessage(message)
-            .tools(tools.isEmpty() ? null : tools)
-            .build();
-
-        LLMResponse response = adapter.chat(request);
-        tokenTracker.updateFromUsage(response);
-
-        if (response.hasToolCalls()) {
-            return handleToolCallsAsync(response.getToolCalls()).join();
-        }
-        String reply = response.getContentOrEmpty();
-        history.addAssistant(reply);
         return reply;
     }
 
@@ -494,31 +530,202 @@ public class LLMClient {
 
     private CompletableFuture<String> continueConversation() {
         return CompletableFuture.supplyAsync(() -> {
-            LLMRequest request = LLMRequest.builder()
-                .model(config.getModel())
-                .messages(history.getMessages())
-                .tools(tools.isEmpty() ? null : tools)
-                .build();
-
+            compactHistoryIfNeeded(Map.of());
+            LLMRequest request = buildRequestFromHistory(Map.of());
             LLMResponse response = adapter.chat(request);
-            tokenTracker.updateFromUsage(response);
             String reply = response.getContentOrEmpty();
             history.addAssistant(reply);
+            syncTokenUsage(response);
+            compactHistoryIfNeeded(Map.of());
             return reply;
         }, executor);
     }
 
     // ========== Request Building ==========
-    private LLMRequest buildRequest(String message, Map<String, String> options) {
+    private LLMRequest buildRequestFromHistory(Map<String, String> options) {
+        List<Message> requestMessages = new ArrayList<>();
+        if (options.get("system") != null && !options.get("system").isBlank()) {
+            requestMessages.add(Message.ofSystem(options.get("system")));
+        }
+        requestMessages.addAll(history.getMessages());
         return LLMRequest.builder()
             .model(config.getModel())
             .stream(config.isStream())
-            .messages(new ArrayList<>(history.getMessages()))
-            .addMessage(Message.ofUser(message))
-            .system(options.get("system"))
+            .messages(requestMessages)
             .temperature(options.get("temperature") != null ? Double.parseDouble(options.get("temperature")) : null)
             .tools(tools.isEmpty() ? null : tools)
             .build();
+    }
+
+    private TokenTracker.ContextInfo estimateContextInfo(List<Message> messages) {
+        long totalLimit = tokenTracker.getModelLimit() > 0
+            ? tokenTracker.getModelLimit()
+            : TokenTracker.detectLimitForModel(config.getModel());
+        int used = tokenTracker.estimateTokens(messages);
+        int remaining = (int) Math.max(0, totalLimit - used);
+        double usagePercent = totalLimit > 0 ? (used * 100.0 / totalLimit) : 0;
+        return new TokenTracker.ContextInfo(
+            config.getModel(),
+            totalLimit,
+            used,
+            remaining,
+            used,
+            0,
+            usagePercent,
+            messages.size()
+        );
+    }
+
+    private void syncTokenUsage(LLMResponse response) {
+        List<Message> currentMessages = history.getMessages();
+        if (response != null && response.getModel() != null) {
+            tokenTracker.setModel(response.getModel(), TokenTracker.detectLimitForModel(response.getModel()));
+        } else if (config.getModel() != null && tokenTracker.getModel() == null) {
+            tokenTracker.setModel(config.getModel(), TokenTracker.detectLimitForModel(config.getModel()));
+        }
+
+        if (response != null && response.getUsage() != null) {
+            tokenTracker.updateFromUsage(response, currentMessages.size());
+        } else {
+            tokenTracker.syncWithConversation(currentMessages);
+        }
+    }
+
+    private void ensureContextCapacity(List<Message> pendingMessages, Map<String, String> options) {
+        if (!autoCompactEnabled || compactingHistory) return;
+
+        List<Message> projected = new ArrayList<>(history.getMessages());
+        if (options.get("system") != null && !options.get("system").isBlank()) {
+            projected.add(0, Message.ofSystem(options.get("system")));
+        }
+        projected.addAll(pendingMessages);
+
+        TokenTracker.ContextInfo projectedInfo = estimateContextInfo(projected);
+        if (projectedInfo.usagePercent() < autoCompactTriggerPercent) return;
+
+        logger.info("Context usage at {}%. Compacting history before request.", String.format("%.1f", projectedInfo.usagePercent()));
+        compactHistoryUntilWithinTarget(options, pendingMessages);
+    }
+
+    private void compactHistoryIfNeeded(Map<String, String> options) {
+        if (!autoCompactEnabled || compactingHistory) return;
+        TokenTracker.ContextInfo info = estimateContextInfo(history.getMessages());
+        if (info.usagePercent() >= autoCompactTriggerPercent) {
+            logger.info("Context usage remains high after response ({}%). Compacting.", String.format("%.1f", info.usagePercent()));
+            compactHistoryUntilWithinTarget(options, List.of());
+        }
+    }
+
+    private void compactHistoryUntilWithinTarget(Map<String, String> options, List<Message> pendingMessages) {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            List<Message> projected = new ArrayList<>(history.getMessages());
+            if (options.get("system") != null && !options.get("system").isBlank()) {
+                projected.add(0, Message.ofSystem(options.get("system")));
+            }
+            projected.addAll(pendingMessages);
+
+            TokenTracker.ContextInfo info = estimateContextInfo(projected);
+            if (info.usagePercent() <= autoCompactTargetPercent) return;
+            String summary = compactHistoryInternal();
+            if (summary == null || summary.isBlank()) return;
+        }
+    }
+
+    public String compactHistoryNow() {
+        return compactHistoryInternal();
+    }
+
+    private String compactHistoryInternal() {
+        if (compactingHistory || history.size() <= 2) return compactedContextSummary;
+
+        compactingHistory = true;
+        try {
+            List<Message> existingMessages = history.getMessages();
+            String transcript = formatTranscript(existingMessages);
+            if (transcript.isBlank()) return compactedContextSummary;
+
+            List<Message> summaryMessages = new ArrayList<>();
+            summaryMessages.add(Message.ofSystem(COMPACTION_SYSTEM_PROMPT));
+            if (compactedContextSummary != null && !compactedContextSummary.isBlank()) {
+                summaryMessages.add(Message.ofUser("Existing rolling summary:\n" + compactedContextSummary));
+            }
+            summaryMessages.add(Message.ofUser("Conversation transcript to compress:\n" + transcript));
+
+            LLMRequest summaryRequest = LLMRequest.builder()
+                .model(config.getModel())
+                .messages(summaryMessages)
+                .stream(false)
+                .build();
+
+            LLMResponse response = adapter.chat(summaryRequest);
+            String summary = response != null ? response.getContentOrEmpty().trim() : "";
+            if (summary.isBlank()) return compactedContextSummary;
+
+            compactedContextSummary = summary;
+
+            List<Message> newHistory = new ArrayList<>();
+            for (Message message : existingMessages) {
+                if (message.getRole() == Message.Role.system
+                    && message.getContent() != null
+                    && !message.getContent().startsWith(COMPACTED_CONTEXT_PREFIX)) {
+                    newHistory.add(message);
+                }
+            }
+
+            Message summaryMessage = Message.ofSystem(COMPACTED_CONTEXT_PREFIX + summary);
+            newHistory.add(summaryMessage);
+
+            List<Message> nonSystemRecent = existingMessages.stream()
+                .filter(message -> message.getRole() != Message.Role.system)
+                .toList();
+            List<Message> recentMessages = nonSystemRecent.subList(
+                Math.max(0, nonSystemRecent.size() - compactKeepLastMessages),
+                nonSystemRecent.size()
+            );
+            newHistory.addAll(recentMessages);
+
+            history.replaceAll(newHistory);
+            syncTokenUsage(null);
+            logger.info("Conversation compacted to {} messages ({} tokens estimated).",
+                history.size(), tokenTracker.getContextInfo().usedTokens());
+            return summary;
+        } finally {
+            compactingHistory = false;
+        }
+    }
+
+    private String formatTranscript(List<Message> messages) {
+        StringBuilder transcript = new StringBuilder();
+        for (Message message : messages) {
+            String content = message.getContent();
+            if ((content == null || content.isBlank()) && (message.getToolCalls() == null || message.getToolCalls().isEmpty())) {
+                continue;
+            }
+
+            transcript.append(message.getRole().name().toUpperCase());
+            if (message.getName() != null && !message.getName().isBlank()) {
+                transcript.append(" (").append(message.getName()).append(")");
+            }
+            transcript.append(": ");
+
+            if (content != null && !content.isBlank()) {
+                transcript.append(content);
+            }
+
+            if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
+                if (content != null && !content.isBlank()) transcript.append("\n");
+                for (ToolCall call : message.getToolCalls()) {
+                    transcript.append("Tool call -> ")
+                        .append(call.getFunction() != null ? call.getFunction().getName() : "unknown")
+                        .append(" ")
+                        .append(call.getFunction() != null ? call.getFunction().getArguments() : Map.of())
+                        .append("\n");
+                }
+            }
+
+            transcript.append("\n\n");
+        }
+        return transcript.toString().trim();
     }
 
     // ========== Tool Conversion ==========
@@ -574,6 +781,10 @@ public class LLMClient {
         @Override public List<Message> getMessages() { return store.getMessages(); }
         @Override public List<Message> getLast(int n) { return store.getLast(n); }
         @Override public void clear() { store.clear(); }
+        @Override public void replaceAll(List<Message> messages) {
+            store.clear();
+            if (messages != null) messages.forEach(store::add);
+        }
         @Override public int size() { return store.size(); }
     }
 }

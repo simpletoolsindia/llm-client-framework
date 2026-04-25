@@ -1,20 +1,107 @@
 # LLM Client Framework for Java
 
-Unified Java client for working with local and cloud LLM providers through one API.
+Unified Java client for local and cloud LLM providers with one API, built-in tool calling, conversation history, context tracking, and automatic history compaction.
 
 [![Maven Central](https://img.shields.io/badge/Maven-in.simpletools%3Allm--client--framework-2ea44f)](https://central.sonatype.com/artifact/in.simpletools/llm-client-framework)
 [![Java](https://img.shields.io/badge/Java-21+-1f6feb)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-## What This Library Gives You
+## Version
+
+Current release:
+
+```text
+in.simpletools:llm-client-framework:1.0.3
+```
+
+## What This Framework Gives You
 
 - One client API across Ollama, OpenAI-compatible providers, Claude, Groq, Mistral, OpenRouter, and more
-- Simple sync, async, and streaming chat APIs
-- Lambda-based tool registration
-- Annotation-based tool auto-registration with `@LLMTool`
+- Sync, async, and streaming chat APIs
+- Lambda-based and annotation-based tool calling
 - In-memory or Redis-backed conversation history
-- Built-in file, web, shell, and HTTP tools
-- Maven Central-ready coordinates for the `in.simpletools` namespace
+- Built-in system and HTTP tools
+- Context window tracking with visible used and remaining context
+- Best-effort automatic context window detection from model names
+- Automatic conversation compaction when the context window gets too full
+- Rolling summary preservation so important conversation state survives compaction
+
+## New Context Features
+
+The framework now supports automatic context management.
+
+### Automatic context window detection
+
+The framework detects common model context sizes automatically:
+
+```java
+LLMClient client = LLMClient.ollama("gemma4:latest");
+System.out.println(client.getContextInfo().summary());
+```
+
+If you want to force a known value:
+
+```java
+client.withContextWindow(128000);
+```
+
+### Context usage visibility
+
+```java
+var info = client.getContextInfo();
+System.out.println(info.summary());
+System.out.println("Used: " + info.usedTokens());
+System.out.println("Remaining: " + info.remainingTokens());
+System.out.println("Usage %: " + info.usagePercent());
+```
+
+You can also project usage before sending the next turn:
+
+```java
+var projected = client.getProjectedContextInfo("Summarize the entire discussion.");
+System.out.println(projected.summary());
+```
+
+### Automatic compaction
+
+When the conversation gets too large, the framework can:
+
+1. ask the model to compress the conversation
+2. keep durable facts, decisions, constraints, and unresolved work
+3. replace older history with a compacted summary
+4. keep the most recent live turns
+
+Enable it like this:
+
+```java
+LLMClient client = LLMClient.ollama("gemma4:latest")
+    .withAutoCompaction();
+```
+
+Or tune it:
+
+```java
+LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
+    .withAutoCompaction(85.0, 55.0, 6);
+```
+
+Meaning:
+
+- start compacting at `85%` usage
+- compact until usage is around `55%`
+- keep the last `6` recent non-system messages in full
+
+You can inspect the current rolling summary:
+
+```java
+System.out.println(client.getCompactedContextSummary());
+```
+
+Or compact manually:
+
+```java
+client.compactHistoryNow();
+```
 
 ## Supported Providers
 
@@ -33,7 +120,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.2'
+    implementation 'in.simpletools:llm-client-framework:1.0.3'
 }
 ```
 
@@ -43,15 +130,13 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 
-## Integrate In A New Project
+## Use In A New Project
 
-### 1. Create a Java 21 project
-
-This library targets Java 21. A minimal Gradle app is enough:
+### 1. Create a Java 21 Gradle app
 
 ```groovy
 plugins {
@@ -63,7 +148,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.2'
+    implementation 'in.simpletools:llm-client-framework:1.0.3'
 }
 
 application {
@@ -71,9 +156,7 @@ application {
 }
 ```
 
-### 2. Add a first local-provider example
-
-Create `src/main/java/demo/Main.java`:
+### 2. Add a basic main class
 
 ```java
 package demo;
@@ -82,9 +165,12 @@ import in.simpletools.llm.framework.client.LLMClient;
 
 public class Main {
     public static void main(String[] args) {
-        LLMClient client = LLMClient.ollama("gemma4:latest");
+        LLMClient client = LLMClient.ollama("gemma4:latest")
+            .withAutoCompaction();
+
         String reply = client.chat("Explain recursion in simple words.");
         System.out.println(reply);
+        System.out.println(client.getContextInfo().summary());
     }
 }
 ```
@@ -103,11 +189,9 @@ ollama pull gemma4:latest
 ollama serve
 ```
 
-If you prefer a cloud model instead of Ollama, switch to one of the provider factory methods below.
+## Use In An Existing Project
 
-## Integrate In An Existing Project
-
-Most teams do not need to restructure their app. Add the dependency, create a small wrapper/service, and keep the rest of your code calling that service.
+Most teams should integrate this through one small service layer instead of calling the LLM directly from every controller or endpoint.
 
 ### Plain Java service example
 
@@ -121,11 +205,15 @@ public class AiService {
         this.client = LLMClient.openAI(
             "gpt-4o-mini",
             System.getenv("OPENAI_API_KEY")
-        );
+        ).withAutoCompaction(85.0, 55.0, 6);
     }
 
     public String summarize(String text) {
         return client.chat("Summarize this text:\n\n" + text);
+    }
+
+    public String contextStats() {
+        return client.getContextInfo().summary();
     }
 }
 ```
@@ -144,7 +232,7 @@ public class AiConfig {
         return LLMClient.openAI(
             "gpt-4o-mini",
             System.getenv("OPENAI_API_KEY")
-        );
+        ).withAutoCompaction(85.0, 55.0, 6);
     }
 }
 ```
@@ -164,24 +252,29 @@ public class SummaryService {
     public String summarizeTicket(String ticket) {
         return llmClient.chat("Summarize this support ticket:\n\n" + ticket);
     }
+
+    public String getContextUsage() {
+        return llmClient.getContextInfo().summary();
+    }
 }
 ```
 
-### Migration approach for an existing codebase
+### Recommended migration approach
 
 1. Add the dependency from Maven Central.
-2. Create one `LLMClient` bean or singleton.
-3. Hide provider choice behind your own service interface.
-4. Move prompts into dedicated service methods instead of controllers.
-5. Add tools only where they are genuinely needed.
-6. Start with one user flow, then expand.
+2. Create one shared `LLMClient` bean or singleton.
+3. Wrap it in your own service class.
+4. Turn on auto-compaction for long-running chat flows.
+5. Surface `getContextInfo()` in logs or admin dashboards.
+6. Add tools only to flows that really need them.
 
 ## Provider Examples
 
 ### Ollama
 
 ```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
+LLMClient client = LLMClient.ollama("gemma4:latest")
+    .withAutoCompaction();
 ```
 
 ### OpenAI
@@ -190,7 +283,7 @@ LLMClient client = LLMClient.ollama("gemma4:latest");
 LLMClient client = LLMClient.openAI(
     "gpt-4o-mini",
     System.getenv("OPENAI_API_KEY")
-);
+).withAutoCompaction(85.0, 55.0, 6);
 ```
 
 ### Claude
@@ -199,7 +292,7 @@ LLMClient client = LLMClient.openAI(
 LLMClient client = LLMClient.claude(
     "claude-3-5-sonnet-20241022",
     System.getenv("ANTHROPIC_API_KEY")
-);
+).withAutoCompaction();
 ```
 
 ### Groq
@@ -227,7 +320,8 @@ LLMClient client = LLMClient.builder()
             .timeoutSeconds(60)
     )
     .history(new ConversationHistory(50))
-    .build();
+    .build()
+    .withAutoCompaction(85.0, 55.0, 6);
 ```
 
 ## Tool Calling
@@ -289,7 +383,7 @@ LLMClient client = LLMClient.ollama("gemma4:latest")
     .withSystemTools();
 ```
 
-This enables file, web, and shell tools such as:
+This enables:
 
 - `read_file`
 - `write_file`
@@ -338,80 +432,61 @@ client.streamChat(
 
 ```java
 LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
-    .withRedisHistory("user-123");
+    .withRedisHistory("user-123")
+    .withAutoCompaction();
 ```
+
+## Example Project
+
+A standalone example project is included here:
+
+- [examples/auto-compaction-demo](examples/auto-compaction-demo/README.md)
+
+It shows:
+
+- local Ollama usage
+- automatic context tracking
+- auto-compaction configuration
+- printing current context stats and compacted summary
 
 ## Publish This Library To Maven Central
 
-This repository already uses the `in.simpletools` group.
-
-### Coordinates
+This repository publishes under:
 
 ```text
 groupId    = in.simpletools
 artifactId = llm-client-framework
 ```
 
-### What you need before publishing
+### Release requirements
 
-1. A verified `in.simpletools` namespace in Maven Central Portal
-2. A Central Portal user token
-3. A GPG key for signing release artifacts
-4. Java 21 available in your CI or local environment
+1. Verified `in.simpletools` namespace in Maven Central Portal
+2. Central Portal user token
+3. GPG signing key
+4. Java 21 in local or CI environment
 
-### Credentials
-
-Create a Maven Central Portal user token and export it in your environment:
+### Environment variables
 
 ```bash
 export CENTRAL_PORTAL_USERNAME=your_token_username
 export CENTRAL_PORTAL_PASSWORD=your_token_password
+export ORG_GRADLE_PROJECT_signingKey='ASCII_ARMORED_GPG_PRIVATE_KEY'
+export ORG_GRADLE_PROJECT_signingPassword='your_gpg_passphrase'
 ```
 
-If your build still uses older variable names, map the same values:
-
-```bash
-export OSSRH_USERNAME="$CENTRAL_PORTAL_USERNAME"
-export OSSRH_PASSWORD="$CENTRAL_PORTAL_PASSWORD"
-```
-
-### Snapshot publishing
-
-Use a version ending in `-SNAPSHOT`, for example:
-
-```groovy
-version = '1.0.3-SNAPSHOT'
-```
-
-Then publish:
+### Release
 
 ```bash
 ./gradlew publish
 ```
 
-### Release publishing
-
-Use a release version:
-
-```groovy
-version = '1.0.3'
-```
-
-Then publish:
+For OSSRH compatibility handoff:
 
 ```bash
-./gradlew publish
+curl -X POST \
+  -H "Authorization: Bearer <base64(username:password)>" \
+  "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/in.simpletools?publishing_type=automatic"
 ```
-
-### Recommended release checklist
-
-1. Update `version` in `build.gradle`
-2. Confirm `group = 'in.simpletools'`
-3. Confirm POM metadata is present
-4. Generate and sign artifacts
-5. Run `./gradlew publish`
-6. Verify the deployment in Maven Central Portal
-7. Tag the release in GitHub
 
 ## Project Structure
 
@@ -424,7 +499,11 @@ src/main/java/in/simpletools/llm/framework/
 ├── model/
 ├── tool/
 ├── tools/
-└── utils/
+├── utils/
+└── example/
+
+examples/
+└── auto-compaction-demo/
 ```
 
 ## Troubleshooting
@@ -436,15 +515,9 @@ ollama serve
 curl http://localhost:11434/api/tags
 ```
 
-### `401 Unauthorized` with cloud providers
+### `401 Unauthorized`
 
-Check that the correct API key environment variable is set before starting the app.
-
-### `Tool not called`
-
-- Write a clear tool description
-- Keep parameter names obvious
-- Use a model that supports tool calling well
+Check your provider API key or Maven Central publishing token.
 
 ### `publish` fails
 
@@ -452,8 +525,9 @@ Check:
 
 - namespace ownership for `in.simpletools`
 - Central Portal token username and password
+- GPG public key availability on supported keyservers
 - required POM metadata
-- Java 21 availability in CI/local environment
+- Java 21 availability
 
 ## License
 

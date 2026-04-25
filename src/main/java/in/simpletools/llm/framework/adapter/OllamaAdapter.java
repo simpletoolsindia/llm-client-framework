@@ -118,6 +118,24 @@ public class OllamaAdapter implements ProviderAdapter {
         resp.setDone(true);
         if (data.get("total_duration") != null)
             resp.setTotalDuration(((Number) data.get("total_duration")).longValue());
+        LLMResponse.Usage usage = new LLMResponse.Usage();
+        boolean hasUsage = false;
+        if (data.get("prompt_eval_count") != null) {
+            int prompt = ((Number) data.get("prompt_eval_count")).intValue();
+            usage.setPromptTokens(prompt);
+            usage.setInputTokens(prompt);
+            hasUsage = true;
+        }
+        if (data.get("eval_count") != null) {
+            int completion = ((Number) data.get("eval_count")).intValue();
+            usage.setCompletionTokens(completion);
+            usage.setOutputTokens(completion);
+            hasUsage = true;
+        }
+        if (hasUsage) {
+            usage.setTotalTokens(usage.getPromptTokens() + usage.getCompletionTokens());
+            resp.setUsage(usage);
+        }
         Object msg = data.get("message");
         if (msg instanceof Map) {
             Map<String, Object> msgMap = (Map<String, Object>) msg;
