@@ -2,10 +2,13 @@ plugins {
     id 'java'
     id 'application'
     id 'maven-publish'
+    id 'signing'
 }
 
 group = 'in.simpletools'
 version = '1.0.2'
+
+def isSnapshot = version.toString().endsWith('-SNAPSHOT')
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21
@@ -37,8 +40,18 @@ tasks.named('test') { useJUnit() }
 
 // ============ Publishing Configuration ============
 
-def sonatypeUsername = project.findProperty('sonatypeUsername') ?: System.getenv('OSSRH_USERNAME')
-def sonatypePassword = project.findProperty('sonatypePassword') ?: System.getenv('OSSRH_PASSWORD')
+def centralUsername = project.findProperty('centralUsername')
+    ?: project.findProperty('sonatypeUsername')
+    ?: System.getenv('CENTRAL_PORTAL_USERNAME')
+    ?: System.getenv('OSSRH_USERNAME')
+
+def centralPassword = project.findProperty('centralPassword')
+    ?: project.findProperty('sonatypePassword')
+    ?: System.getenv('CENTRAL_PORTAL_PASSWORD')
+    ?: System.getenv('OSSRH_PASSWORD')
+
+def signingKey = project.findProperty('signingKey') ?: System.getenv('ORG_GRADLE_PROJECT_signingKey')
+def signingPassword = project.findProperty('signingPassword') ?: System.getenv('ORG_GRADLE_PROJECT_signingPassword')
 
 publishing {
     publications {
@@ -66,7 +79,7 @@ publishing {
                     developer {
                         id = 'simpletoolsindia'
                         name = 'Simple Tools India'
-                        email = 'dev@simpletools.in'
+                        email = 'support@simpletools.in'
                     }
                 }
 
@@ -86,25 +99,28 @@ publishing {
 
     repositories {
         maven {
-            name = 'MavenCentral'
-            url = 'https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/'
+            name = isSnapshot ? 'CentralSnapshots' : 'CentralPortal'
+            url = uri(isSnapshot
+                ? 'https://central.sonatype.com/repository/maven-snapshots/'
+                : 'https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
             credentials {
-                username = sonatypeUsername
-                password = sonatypePassword
+                username = centralUsername
+                password = centralPassword
             }
         }
     }
 }
 
-// Helper tasks
-tasks.register('publishToSnapshot') {
-    group = 'publishing'
-    description = 'Publish snapshot version to Maven Central'
-    tasks.findByName('publish')?.dependsOn('assemble')
+signing {
+    if (signingKey && signingPassword) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+    }
+    required = !isSnapshot
+    sign publishing.publications.mavenJava
 }
 
-tasks.register('publishToRelease') {
+tasks.register('publishToCentral') {
     group = 'publishing'
-    description = 'Publish release version to Maven Central'
-    tasks.findByName('publish')?.dependsOn('assemble')
+    description = 'Publish the current version to Maven Central or Central snapshots based on the version suffix'
+    dependsOn('publish')
 }
