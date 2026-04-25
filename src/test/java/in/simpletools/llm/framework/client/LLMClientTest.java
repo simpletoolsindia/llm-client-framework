@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
+import in.simpletools.llm.framework.utils.SimpleLogger;
 
 class LLMClientTest {
     @Test
@@ -56,6 +57,14 @@ class LLMClientTest {
         assertNull(client.getCompactedContextSummary());
         assertTrue(client.getHistory().getMessages().isEmpty());
         assertTrue(client.getContextInfo().usedTokens() == 0);
+    }
+
+    @Test
+    void verboseLoggingCanBeEnabled() {
+        LLMClient client = newClient().withVerboseLogging(SimpleLogger.Level.DEBUG);
+
+        assertTrue(client.getLogger().isVerbose());
+        assertTrue(client.getLogger().getLevel() == SimpleLogger.Level.DEBUG);
     }
 
     private LLMClient newClient() {

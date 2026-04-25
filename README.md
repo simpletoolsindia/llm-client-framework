@@ -11,7 +11,7 @@ Unified Java client for local and cloud LLM providers with one API, built-in too
 Current release:
 
 ```text
-in.simpletools:llm-client-framework:1.0.4
+in.simpletools:llm-client-framework:1.0.5
 ```
 
 ## What This Framework Gives You
@@ -25,6 +25,35 @@ in.simpletools:llm-client-framework:1.0.4
 - Best-effort automatic context window detection from model names
 - Automatic conversation compaction when the context window gets too full
 - Rolling summary preservation so important conversation state survives compaction
+- Optional verbose developer logging for request flow, token sync, tool execution, and compaction debugging
+
+## Verbose Logging
+
+For deeper debugging, developers can enable verbose logging.
+
+### Enable verbose logging
+
+```java
+import in.simpletools.llm.framework.utils.SimpleLogger;
+
+LLMClient client = LLMClient.ollama("gemma4:latest")
+    .withVerboseLogging(SimpleLogger.Level.DEBUG);
+```
+
+This keeps the framework logs developer-friendly by default, but when verbose mode is enabled it includes extra diagnostics such as:
+
+- request message count
+- tool count
+- response content length
+- token usage sync details
+- compaction summary generation details
+- current thread name in logs
+
+### Disable verbose logging
+
+```java
+client.withoutVerboseLogging();
+```
 
 ## New Context Features
 
@@ -120,7 +149,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.4'
+    implementation 'in.simpletools:llm-client-framework:1.0.5'
 }
 ```
 
@@ -130,7 +159,7 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.4</version>
+    <version>1.0.5</version>
 </dependency>
 ```
 
@@ -148,7 +177,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.4'
+    implementation 'in.simpletools:llm-client-framework:1.0.5'
 }
 
 application {
@@ -166,7 +195,8 @@ import in.simpletools.llm.framework.client.LLMClient;
 public class Main {
     public static void main(String[] args) {
         LLMClient client = LLMClient.ollama("gemma4:latest")
-            .withAutoCompaction();
+            .withAutoCompaction()
+            .withVerboseLogging();
 
         String reply = client.chat("Explain recursion in simple words.");
         System.out.println(reply);
@@ -447,6 +477,7 @@ It shows:
 - local Ollama usage
 - automatic context tracking
 - auto-compaction configuration
+- verbose logging
 - printing current context stats and compacted summary
 
 ## Publish This Library To Maven Central

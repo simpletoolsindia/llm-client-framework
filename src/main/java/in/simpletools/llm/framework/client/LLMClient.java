@@ -440,6 +440,20 @@ public class LLMClient {
         manualContextWindowConfigured = true;
         return this;
     }
+    public LLMClient withVerboseLogging() {
+        logger.setVerbose(true);
+        logger.setLevel(SimpleLogger.Level.DEBUG);
+        return this;
+    }
+    public LLMClient withVerboseLogging(SimpleLogger.Level level) {
+        logger.setVerbose(true);
+        logger.setLevel(level);
+        return this;
+    }
+    public LLMClient withoutVerboseLogging() {
+        logger.setVerbose(false);
+        return this;
+    }
     public LLMClient setLogLevel(SimpleLogger.Level level) {
         logger.setLevel(level); return this;
     }
@@ -450,13 +464,24 @@ public class LLMClient {
         ensureContextCapacity(List.of(message), options);
         history.add(message);
         syncTokenUsage(null);
+        logger.debugVerbose(() -> "Accepted user message | role=" + message.getRole()
+            + " | chars=" + safeLength(message.getContent())
+            + " | historyMessages=" + history.size());
         return processCurrentConversation(options);
     }
 
     private String processCurrentConversation(Map<String, String> options) {
         logger.debug("Processing conversation with {} messages", history.size());
         LLMRequest request = buildRequestFromHistory(options);
+        logger.debugVerbose(() -> "Request details | model=" + request.getModel()
+            + " | stream=" + request.isStream()
+            + " | messages=" + sizeOf(request.getMessages())
+            + " | tools=" + sizeOf(request.getTools())
+            + " | context=" + tokenTracker.getContextInfo().summary());
         LLMResponse response = adapter.chat(request);
+        logger.debugVerbose(() -> "Response details | model=" + response.getModel()
+            + " | finishReason=" + response.getFinishReason()
+            + " | contentChars=" + safeLength(response.getContent()));
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
@@ -472,6 +497,9 @@ public class LLMClient {
 
     // ========== Tool Execution with Retry ==========
     private CompletableFuture<String> handleToolCallsAsync(List<ToolCall> calls) {
+        logger.debugVerbose(() -> "Tool call batch | names=" + calls.stream()
+            .map(call -> call.getFunction() != null ? call.getFunction().getName() : "unknown")
+            .toList());
         List<CompletableFuture<String>> futures = calls.stream()
             .map(this::executeToolWithRetryAsync)
             .toList();
@@ -504,6 +532,7 @@ public class LLMClient {
             }
 
             int maxRetries = info.getMaxRetries();
+            logger.debugVerbose(() -> "Executing tool | name=" + toolName + " | args=" + args);
             if (maxRetries <= 0) {
                 try {
                     Object result = info.invoke(args);
@@ -598,6 +627,7 @@ public class LLMClient {
         } else {
             tokenTracker.syncWithConversation(currentMessages);
         }
+        logger.debugVerbose(() -> "Token usage synced | " + tokenTracker.getContextInfo().summary());
     }
 
     private void ensureContextCapacity(List<Message> pendingMessages, Map<String, String> options) {
@@ -665,6 +695,7 @@ public class LLMClient {
             if (summary.isBlank()) return compactedContextSummary;
 
             compactedContextSummary = summary;
+            logger.infoVerbose(() -> "Compaction summary generated | chars=" + summary.length());
 
             List<Message> newHistory = new ArrayList<>();
             for (Message message : existingMessages) {
@@ -771,7 +802,17 @@ public class LLMClient {
         target.compactKeepLastMessages = compactKeepLastMessages;
         target.compactedContextSummary = compactedContextSummary;
         target.manualContextWindowConfigured = manualContextWindowConfigured;
+        target.logger.setVerbose(logger.isVerbose());
+        target.logger.setLevel(logger.getLevel());
         return target;
+    }
+
+    private int safeLength(String value) {
+        return value != null ? value.length() : 0;
+    }
+
+    private int sizeOf(Collection<?> values) {
+        return values != null ? values.size() : 0;
     }
 
     // ========== Tool Conversion ==========

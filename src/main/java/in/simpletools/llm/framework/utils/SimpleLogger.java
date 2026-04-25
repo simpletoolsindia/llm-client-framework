@@ -41,6 +41,7 @@ public class SimpleLogger {
 
     private final String name;
     private Level level;
+    private boolean verbose;
 
     private SimpleLogger(String name) {
         this.name = name;
@@ -55,6 +56,8 @@ public class SimpleLogger {
 
     public void setLevel(Level level) { this.level = level; }
     public Level getLevel() { return level; }
+    public void setVerbose(boolean verbose) { this.verbose = verbose; }
+    public boolean isVerbose() { return verbose; }
     public static void setGlobalLevel(Level level) { globalLevel = level; }
     public static Level getGlobalLevel() { return globalLevel; }
 
@@ -79,20 +82,41 @@ public class SimpleLogger {
     public void error(String msg, Object... args) { log(Level.ERROR, format(msg, args), null); }
     public void error(String msg, Throwable t) { log(Level.ERROR, msg, t); }
 
+    public void debugVerbose(Supplier<String> msgSupplier) {
+        if (verbose && isEnabled(Level.DEBUG)) log(Level.DEBUG, msgSupplier.get(), null);
+    }
+
+    public void infoVerbose(Supplier<String> msgSupplier) {
+        if (verbose && isEnabled(Level.INFO)) log(Level.INFO, msgSupplier.get(), null);
+    }
+
+    public void errorVerbose(Supplier<String> msgSupplier) {
+        if (verbose && isEnabled(Level.ERROR)) log(Level.ERROR, msgSupplier.get(), null);
+    }
+
     private void log(Level lvl, String msg, Throwable t) {
-        if (lvl.ordinal() < this.level.ordinal() || this.level == Level.OFF) return;
+        if (!isEnabled(lvl)) return;
 
         String timestamp = LocalDateTime.now().format(fmt);
         String levelStr = lvl.name();
         StringBuilder sb = new StringBuilder();
         sb.append(timestamp).append(" [").append(levelStr).append("] [").append(name).append("] ").append(msg);
+        if (verbose) {
+            sb.append(" | thread=").append(Thread.currentThread().getName());
+        }
         if (t != null) {
             sb.append("\n  Exception: ").append(t.getClass().getName()).append(": ").append(t.getMessage());
-            for (StackTraceElement ste : t.getStackTrace()) {
-                if (ste.getClassName().startsWith("in.simpletools")) {
-                    sb.append("\n    at ").append(ste.getClassName()).append(".").append(ste.getMethodName())
-                      .append("(").append(ste.getFileName()).append(":").append(ste.getLineNumber()).append(")");
-                    break;
+            if (verbose) {
+                for (StackTraceElement ste : t.getStackTrace()) {
+                    sb.append("\n    at ").append(ste);
+                }
+            } else {
+                for (StackTraceElement ste : t.getStackTrace()) {
+                    if (ste.getClassName().startsWith("in.simpletools")) {
+                        sb.append("\n    at ").append(ste.getClassName()).append(".").append(ste.getMethodName())
+                          .append("(").append(ste.getFileName()).append(":").append(ste.getLineNumber()).append(")");
+                        break;
+                    }
                 }
             }
         }
@@ -102,6 +126,10 @@ public class SimpleLogger {
 
         // Global handlers
         for (Handler h : additionalGlobalHandlers) h.log(output);
+    }
+
+    private boolean isEnabled(Level lvl) {
+        return !(lvl.ordinal() < this.level.ordinal() || this.level == Level.OFF);
     }
 
     private static String format(String msg, Object... args) {
