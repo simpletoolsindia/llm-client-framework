@@ -236,6 +236,12 @@ public class HttpTools {
 
     // ===== Registration =====
 
+    // Static helper for extracting string args (usable in lambda context)
+    private static String extractStr(java.util.Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        return v == null ? null : v.toString();
+    }
+
     /**
      * Register all HTTP tools to a ToolRegistry.
      * Adds: http_get, http_post, http_put, http_patch, http_delete
@@ -244,44 +250,44 @@ public class HttpTools {
         HttpTools instance = new HttpTools();
         reg.register("http_get", "Make an HTTP GET request to fetch data from a URL. Returns status, body, and response time.",
             (args) -> instance.http_get(
-                str(args, "url"),
-                str(args, "headers"),
-                str(args, "params")
+                extractStr(args, "url"),
+                extractStr(args, "headers"),
+                extractStr(args, "params")
             ), Map.of(
-                "url", new ToolRegistry.ParamInfo("string", "The full URL to fetch", false),
-                "headers", new ToolRegistry.ParamInfo("string", "Optional HTTP headers as JSON string", false),
-                "params", new ToolRegistry.ParamInfo("string", "Optional query parameters as JSON string", false)
+                "url", new ToolRegistry.ParamInfo("url", "The full URL to fetch", false, String.class),
+                "headers", new ToolRegistry.ParamInfo("headers", "Optional HTTP headers as JSON string", false, String.class),
+                "params", new ToolRegistry.ParamInfo("params", "Optional query parameters as JSON string", false, String.class)
             ), 2, 1000, 2.0, 5000);
 
         reg.register("http_post", "Make an HTTP POST request to create or submit data. Returns status, body, and response time.",
-            (args) -> instance.http_post(str(args, "url"), str(args, "headers"), str(args, "body")),
+            (args) -> instance.http_post(extractStr(args, "url"), extractStr(args, "headers"), extractStr(args, "body")),
             Map.of(
-                "url", new ToolRegistry.ParamInfo("string", "The full URL to POST to", false),
-                "headers", new ToolRegistry.ParamInfo("string", "Optional HTTP headers as JSON string", false),
-                "body", new ToolRegistry.ParamInfo("string", "Request body as JSON string", false)
+                "url", new ToolRegistry.ParamInfo("url", "The full URL to POST to", false, String.class),
+                "headers", new ToolRegistry.ParamInfo("headers", "Optional HTTP headers as JSON string", false, String.class),
+                "body", new ToolRegistry.ParamInfo("body", "Request body as JSON string", false, String.class)
             ), 2, 1000, 2.0, 5000);
 
         reg.register("http_put", "Make an HTTP PUT request to replace a resource. Returns status, body, and response time.",
-            (args) -> instance.http_put(str(args, "url"), str(args, "headers"), str(args, "body")),
+            (args) -> instance.http_put(extractStr(args, "url"), extractStr(args, "headers"), extractStr(args, "body")),
             Map.of(
-                "url", new ToolRegistry.ParamInfo("string", "The full URL to PUT to", false),
-                "headers", new ToolRegistry.ParamInfo("string", "Optional HTTP headers as JSON string", false),
-                "body", new ToolRegistry.ParamInfo("string", "Replacement body as JSON string", false)
+                "url", new ToolRegistry.ParamInfo("url", "The full URL to PUT to", false, String.class),
+                "headers", new ToolRegistry.ParamInfo("headers", "Optional HTTP headers as JSON string", false, String.class),
+                "body", new ToolRegistry.ParamInfo("body", "Replacement body as JSON string", false, String.class)
             ), 2, 1000, 2.0, 5000);
 
         reg.register("http_patch", "Make an HTTP PATCH request to partially update a resource. Returns status, body, and response time.",
-            (args) -> instance.http_patch(str(args, "url"), str(args, "headers"), str(args, "body")),
+            (args) -> instance.http_patch(extractStr(args, "url"), extractStr(args, "headers"), extractStr(args, "body")),
             Map.of(
-                "url", new ToolRegistry.ParamInfo("string", "The full URL to PATCH", false),
-                "headers", new ToolRegistry.ParamInfo("string", "Optional HTTP headers as JSON string", false),
-                "body", new ToolRegistry.ParamInfo("string", "Partial update body as JSON string", false)
+                "url", new ToolRegistry.ParamInfo("url", "The full URL to PATCH", false, String.class),
+                "headers", new ToolRegistry.ParamInfo("headers", "Optional HTTP headers as JSON string", false, String.class),
+                "body", new ToolRegistry.ParamInfo("body", "Partial update body as JSON string", false, String.class)
             ), 2, 1000, 2.0, 5000);
 
         reg.register("http_delete", "Make an HTTP DELETE request to remove a resource. Returns status, body, and response time.",
-            (args) -> instance.http_delete(str(args, "url"), str(args, "headers")),
+            (args) -> instance.http_delete(extractStr(args, "url"), extractStr(args, "headers")),
             Map.of(
-                "url", new ToolRegistry.ParamInfo("string", "The full URL to DELETE", false),
-                "headers", new ToolRegistry.ParamInfo("string", "Optional HTTP headers as JSON string", false)
+                "url", new ToolRegistry.ParamInfo("url", "The full URL to DELETE", false, String.class),
+                "headers", new ToolRegistry.ParamInfo("headers", "Optional HTTP headers as JSON string", false, String.class)
             ), 2, 1000, 2.0, 5000);
 
         log.info("Registered 5 HTTP tools (GET, POST, PUT, PATCH, DELETE)");

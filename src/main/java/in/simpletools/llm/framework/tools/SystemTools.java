@@ -241,10 +241,10 @@ public class SystemTools {
 
     /**
      * Find all files matching a glob pattern within a directory tree.
-     * Supports patterns like "*.java", "**/*.txt", "src/**/*.java".
+     * Supports patterns like star.java (any extension) and dot patterns.
      *
      * @param path    root directory to search from
-     * @param pattern glob pattern (e.g., "*.java", "**/*.md")
+     * @param pattern glob pattern for files (e.g., dot java)
      * @return list of matching file paths, one per line
      */
     @LLMTool(name = "find_files",
@@ -252,7 +252,7 @@ public class SystemTools {
                     "Examples: *.java finds all Java files, **/*.txt finds all text files.")
     public static String findFiles(
             @ToolParam(name = "path", description = "Root directory to search from") String path,
-            @ToolParam(name = "pattern", description = "Glob pattern (e.g., *.java, **/*.txt, *.md)") String pattern) {
+            @ToolParam(name = "pattern", description = "Glob pattern for files") String pattern) {
         try {
             Path root = Paths.get(path);
             if (!Files.exists(root)) {
@@ -445,8 +445,8 @@ public class SystemTools {
             URL target = URI.create(url).toURL();
             conn = (HttpURLConnection) target.openConnection();
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; LLM-Tools/1.0)");
-            conn.setConnectTimeout;  // 10 second connection timeout
-            conn.setReadTimeout;     // 10 second read timeout
+            conn.setConnectTimeout(10_000);  // 10 second connection timeout
+            conn.setReadTimeout(10_000);     // 10 second read timeout
 
             int httpCode = conn.getResponseCode();
             if (httpCode != 200) {

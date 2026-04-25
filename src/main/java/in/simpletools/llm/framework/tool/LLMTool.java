@@ -35,4 +35,22 @@ public @interface LLMTool {
 
     /** Max retry delay in milliseconds. Default 10000ms. */
     long maxRetryDelayMs() default 10000;
+
+    // ===== Cache Configuration (v1.1) =====
+    /** Enable caching for tool results. Default false. */
+    boolean cached() default false;
+
+    /** Cache TTL in seconds. Default 300 (5 minutes). */
+    int cacheTtlSeconds() default 300;
+
+    // ===== Circuit Breaker (v1.1) =====
+    /** Failures before circuit opens. 0 = disabled. Default 0. */
+    int failureThreshold() default 0;
+
+    /** Milliseconds before attempting circuit reset. Default 60000. */
+    long circuitResetMs() default 60_000;
+
+    // ===== Timeout (v1.1) =====
+    /** Tool execution timeout in milliseconds. 0 = no timeout. Default 0. */
+    long timeoutMs() default 0;
 }
