@@ -44,7 +44,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.7'
+    implementation 'in.simpletools:llm-client-framework:1.0.8'
 }
 ```
 
@@ -54,7 +54,7 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.7</version>
+    <version>1.0.8</version>
 </dependency>
 ```
 
@@ -792,7 +792,7 @@ curl http://localhost:11434/api/tags
 
 Check that:
 
-- you are using `1.0.7` or newer
+- you are using `1.0.8` or newer
 - the model/provider supports streaming
 - your program does not exit before `streamChat(...)` returns
 - your callback flushes output if needed
