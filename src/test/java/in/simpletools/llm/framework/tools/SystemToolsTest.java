@@ -132,7 +132,7 @@ class SystemToolsTest {
     }
 
     @Test
-    void webSearchToolReturnsResults() throws Exception {
+    void duckDuckGoWebSearchToolReturnsResults() throws Exception {
         ToolRegistry registry = new ToolRegistry();
         SystemTools.registerAll(registry);
 
@@ -152,11 +152,7 @@ class SystemToolsTest {
         });
         server.start();
 
-        String previousTemplate = System.getProperty("simpletools.webSearchUrlTemplate");
-        System.setProperty(
-                "simpletools.webSearchUrlTemplate",
-                "http://127.0.0.1:" + server.getAddress().getPort() + "/search?q=%s"
-        );
+        SystemTools.useDuckDuckGoSearch("http://127.0.0.1:" + server.getAddress().getPort() + "/search?q=%s");
         try {
             String results = invoke(registry, "web_search", Map.of(
                     "query", "simpletoolsindia llm-client-framework",
@@ -167,11 +163,53 @@ class SystemToolsTest {
             assertTrue(results.contains("Unified Java client for LLM providers."));
             assertTrue(results.contains("URL: https://github.com/simpletoolsindia/llm-client-framework"));
         } finally {
-            if (previousTemplate == null) {
-                System.clearProperty("simpletools.webSearchUrlTemplate");
-            } else {
-                System.setProperty("simpletools.webSearchUrlTemplate", previousTemplate);
-            }
+            SystemTools.useDuckDuckGoSearch();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void searxngWebSearchToolReturnsResults() throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        SystemTools.registerAll(registry);
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/search", exchange -> {
+            byte[] body = """
+                    {
+                      "results": [
+                        {
+                          "title": "SearXNG Result",
+                          "url": "https://example.com/searxng",
+                          "content": "Result from <b>SearXNG</b> JSON."
+                        },
+                        {
+                          "title": "Second Result",
+                          "url": "https://example.com/second",
+                          "content": "Another result."
+                        }
+                      ]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        SystemTools.useSearxngSearch("http://127.0.0.1:" + server.getAddress().getPort());
+        try {
+            String results = invoke(registry, "web_search", Map.of(
+                    "query", "custom searxng",
+                    "limit", 1
+            ));
+            assertTrue(results.startsWith("Search results for:"));
+            assertTrue(results.contains("SearXNG Result"));
+            assertTrue(results.contains("Result from SearXNG JSON."));
+            assertTrue(results.contains("URL: https://example.com/searxng"));
+            assertFalse(results.contains("Second Result"));
+        } finally {
+            SystemTools.useDuckDuckGoSearch();
             server.stop(0);
         }
     }

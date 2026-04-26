@@ -1,6 +1,7 @@
 package in.simpletools.llm.framework.tools;
 
 import in.simpletools.llm.framework.tool.*;
+import com.google.gson.Gson;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -56,6 +57,54 @@ import java.util.stream.Collectors;
  * </ul>
  */
 public class SystemTools {
+    private static final Gson GSON = new Gson();
+    private static volatile WebSearchConfig webSearchConfig = WebSearchConfig.duckDuckGo();
+
+    public enum WebSearchProvider {
+        DUCKDUCKGO,
+        SEARXNG
+    }
+
+    public record WebSearchConfig(
+            WebSearchProvider provider,
+            String searxngBaseUrl,
+            String duckDuckGoUrlTemplate
+    ) {
+        public static WebSearchConfig duckDuckGo() {
+            return new WebSearchConfig(
+                    WebSearchProvider.DUCKDUCKGO,
+                    null,
+                    "https://html.duckduckgo.com/html/?q=%s"
+            );
+        }
+
+        public static WebSearchConfig duckDuckGo(String urlTemplate) {
+            return new WebSearchConfig(WebSearchProvider.DUCKDUCKGO, null, urlTemplate);
+        }
+
+        public static WebSearchConfig searxng(String baseUrl) {
+            return new WebSearchConfig(WebSearchProvider.SEARXNG, baseUrl, null);
+        }
+    }
+
+    public static void configureWebSearch(WebSearchConfig config) {
+        if (config == null) {
+            throw new IllegalArgumentException("Web search config cannot be null");
+        }
+        webSearchConfig = config;
+    }
+
+    public static void useDuckDuckGoSearch() {
+        configureWebSearch(WebSearchConfig.duckDuckGo());
+    }
+
+    public static void useDuckDuckGoSearch(String urlTemplate) {
+        configureWebSearch(WebSearchConfig.duckDuckGo(urlTemplate));
+    }
+
+    public static void useSearxngSearch(String baseUrl) {
+        configureWebSearch(WebSearchConfig.searxng(baseUrl));
+    }
 
     // ===== FILE TOOLS =====
 
@@ -516,7 +565,7 @@ public class SystemTools {
 
     /**
      * Perform a web search and return formatted results with titles, snippets, and URLs.
-     * Uses DuckDuckGo HTML as the search backend.
+     * Uses DuckDuckGo HTML by default, or SearXNG when configured.
      *
      * @param query search query string
      * @param limit  maximum number of results to return (default 10, max 20)
@@ -530,12 +579,43 @@ public class SystemTools {
             @ToolParam(name = "limit", description = "Maximum number of results (default 10, max 20)", required = false) Integer limit) {
         try {
             int maxResults = (limit != null && limit > 0) ? Math.min(limit, 20) : 10;
+            WebSearchConfig config = resolveWebSearchConfig();
 
+            if (config.provider() == WebSearchProvider.SEARXNG) {
+                return searchSearxng(query, maxResults, config);
+            }
+            return searchDuckDuckGo(query, maxResults, config);
+        } catch (Exception e) {
+            return "Error performing web search for '" + query + "': " + e.getMessage();
+        }
+    }
+
+    private static WebSearchConfig resolveWebSearchConfig() {
+        String provider = System.getProperty("simpletools.webSearchProvider");
+        String searxngBaseUrl = System.getProperty("simpletools.searxngBaseUrl");
+        String duckDuckGoTemplate = System.getProperty("simpletools.webSearchUrlTemplate");
+
+        if (provider != null && provider.equalsIgnoreCase("searxng")) {
+            return WebSearchConfig.searxng(searxngBaseUrl);
+        }
+        if (provider != null && provider.equalsIgnoreCase("duckduckgo")) {
+            return duckDuckGoTemplate == null
+                    ? WebSearchConfig.duckDuckGo()
+                    : WebSearchConfig.duckDuckGo(duckDuckGoTemplate);
+        }
+        if (searxngBaseUrl != null && !searxngBaseUrl.isBlank()) {
+            return WebSearchConfig.searxng(searxngBaseUrl);
+        }
+        if (duckDuckGoTemplate != null && !duckDuckGoTemplate.isBlank()) {
+            return WebSearchConfig.duckDuckGo(duckDuckGoTemplate);
+        }
+        return webSearchConfig;
+    }
+
+    private static String searchDuckDuckGo(String query, int maxResults, WebSearchConfig config) {
+        try {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
-            String searchUrl = System.getProperty(
-                    "simpletools.webSearchUrlTemplate",
-                    "https://html.duckduckgo.com/html/?q=%s"
-            ).formatted(encodedQuery);
+            String searchUrl = config.duckDuckGoUrlTemplate().formatted(encodedQuery);
 
             // Fetch the raw search results page so the parser can inspect result links.
             String html = fetchRaw(searchUrl);
@@ -602,6 +682,68 @@ public class SystemTools {
         } catch (Exception e) {
             return "Error performing web search for '" + query + "': " + e.getMessage();
         }
+    }
+
+    private static String searchSearxng(String query, int maxResults, WebSearchConfig config) {
+        String baseUrl = config.searxngBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return "Error performing web search: SearXNG base URL is not configured.";
+        }
+
+        String normalizedBase = baseUrl.endsWith("/")
+                ? baseUrl.substring(0, baseUrl.length() - 1)
+                : baseUrl;
+        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        String searchUrl = normalizedBase + "/search?q=" + encodedQuery + "&format=json";
+
+        String json = fetchRaw(searchUrl);
+        if (json.startsWith("Error:")) {
+            return "Error performing web search: could not fetch SearXNG results. " + json;
+        }
+
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = GSON.fromJson(json, Map.class);
+            Object rawResults = data != null ? data.get("results") : null;
+            if (!(rawResults instanceof List<?> results) || results.isEmpty()) {
+                return "No search results found for: \"" + query + "\"";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Search results for: \"").append(query).append("\"\n\n");
+            int count = 0;
+            Set<String> seenUrls = new java.util.LinkedHashSet<>();
+
+            for (Object rawResult : results) {
+                if (count >= maxResults) break;
+                if (!(rawResult instanceof Map<?, ?> result)) continue;
+
+                String title = asString(result.get("title"));
+                String url = asString(result.get("url"));
+                String snippet = asString(result.get("content"));
+
+                if (url.isBlank() || title.isBlank() || seenUrls.contains(url)) continue;
+                seenUrls.add(url);
+
+                sb.append(count + 1).append(". ").append(title).append("\n");
+                if (!snippet.isBlank()) {
+                    sb.append("   ").append(stripHtml(snippet)).append("\n");
+                }
+                sb.append("   URL: ").append(url).append("\n\n");
+                count++;
+            }
+
+            if (count == 0) {
+                return "No search results found for: \"" + query + "\"";
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "Error performing web search for '" + query + "': invalid SearXNG response: " + e.getMessage();
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? "" : value.toString();
     }
 
     private static String fetchRaw(String url) {

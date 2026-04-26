@@ -424,6 +424,25 @@ This enables:
 - `fetch_webpage`
 - `run_bash`
 
+Configure `web_search` to use DuckDuckGo HTML search, which is the default:
+
+```java
+SystemTools.useDuckDuckGoSearch();
+```
+
+Or point it at a SearXNG instance:
+
+```java
+SystemTools.useSearxngSearch("https://search.example.com");
+```
+
+Runtime properties are also supported:
+
+```bash
+-Dsimpletools.webSearchProvider=searxng
+-Dsimpletools.searxngBaseUrl=https://search.example.com
+```
+
 ### HTTP tools
 
 ```java
