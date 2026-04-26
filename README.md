@@ -44,7 +44,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.8'
+    implementation 'in.simpletools:llm-client-framework:1.0.9'
 }
 ```
 
@@ -54,7 +54,7 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.8</version>
+    <version>1.0.9</version>
 </dependency>
 ```
 
@@ -241,6 +241,30 @@ client.streamChatWithStatus(
     System.out::print,
     status -> System.err.println(status.type() + " " + status.toolName())
 );
+```
+
+Real weather API streaming example:
+
+```bash
+./gradlew run --args="Jaipur"
+```
+
+Or run the demo class directly:
+
+```java
+import in.simpletools.llm.framework.example.WeatherToolStreamingDemo;
+
+WeatherToolStreamingDemo.main(new String[] {"Jaipur"});
+```
+
+The demo registers a `get_weather` tool, calls Open-Meteo for real weather data, prints live tool status with elapsed milliseconds, and streams the final answer:
+
+```text
+[ 120 ms] thinking
+[1020 ms] tool requested: get_weather {city=Jaipur}
+[1025 ms] running tool: get_weather
+[1850 ms] tool result validated: get_weather
+[1860 ms] continuing with tool result
 ```
 
 Status types include:
@@ -792,7 +816,7 @@ curl http://localhost:11434/api/tags
 
 Check that:
 
-- you are using `1.0.8` or newer
+- you are using `1.0.9` or newer
 - the model/provider supports streaming
 - your program does not exit before `streamChat(...)` returns
 - your callback flushes output if needed

@@ -954,6 +954,19 @@ public class LLMClient implements AutoCloseable {
         if (rawResult == null) {
             return new ToolValidation(false, "Tool returned null instead of usable data.");
         }
+        if (rawResult instanceof Map<?, ?> map) {
+            Object ok = map.get("ok");
+            Object status = map.get("status");
+            Object error = map.get("error");
+            if (Boolean.FALSE.equals(ok)
+                || (status != null && List.of("failed", "error", "unavailable").contains(status.toString().toLowerCase(Locale.ROOT)))
+                || error != null) {
+                String reason = error != null && !error.toString().isBlank()
+                    ? error.toString()
+                    : "Tool returned a structured failure result.";
+                return new ToolValidation(false, reason);
+            }
+        }
         if (rawResult instanceof String text) {
             String trimmed = text.trim();
             if (trimmed.isEmpty()) {
