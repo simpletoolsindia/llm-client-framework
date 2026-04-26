@@ -2,9 +2,14 @@ package in.simpletools.llm.framework.adapter;
 
 import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
+import java.io.BufferedReader;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.net.http.*;
 import java.net.URI;
+import java.net.URL;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -63,30 +68,49 @@ public class ClaudeAdapter implements ProviderAdapter {
 
     @Override
     public void streamChat(LLMRequest request, Consumer<String> onChunk) {
+        HttpURLConnection conn = null;
         try {
             Map<String, Object> reqMap = toClaudeFormat(request);
             reqMap.put("stream", true);
             String json = gson.toJson(reqMap);
 
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/messages"))
-                .header("Content-Type", "application/json")
-                .header("x-api-key", apiKey)
-                .header("anthropic-version", "2023-06-01")
-                .header("anthropic-dangerous-direct-browser-access", "true")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .timeout(Duration.ofMinutes(5))
-                .build();
+            URL url = URI.create(baseUrl + "/messages").toURL();
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("x-api-key", apiKey);
+            conn.setRequestProperty("anthropic-version", "2023-06-01");
+            conn.setRequestProperty("anthropic-dangerous-direct-browser-access", "true");
+            conn.setConnectTimeout(30_000);
+            conn.setReadTimeout(300_000);
+            conn.setDoOutput(true);
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            for (String line : resp.body().split("\n")) {
-                if (line.startsWith("data: ")) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> chunk = gson.fromJson(line.substring(6), Map.class);
-                    parseChunk(chunk, onChunk);
+            try (var writer = new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8)) {
+                writer.write(json);
+            }
+
+            int status = conn.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("Claude API error: HTTP " + status + " " + readErrorBody(conn));
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data: ")) {
+                        String data = line.substring(6).trim();
+                        if (data.equals("[DONE]") || data.isEmpty()) continue;
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> chunk = gson.fromJson(data, Map.class);
+                        parseChunk(chunk, onChunk);
+                    }
                 }
             }
         } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
+        finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     @Override
@@ -196,5 +220,14 @@ public class ClaudeAdapter implements ProviderAdapter {
 
     private LLMResponse createErrorResponse(String error) {
         return new LLMResponse(null, new Message(Message.Role.assistant, "Error: " + error), "error", null, null, true, null, null, null);
+    }
+
+    private String readErrorBody(HttpURLConnection conn) {
+        try (var stream = conn.getErrorStream()) {
+            if (stream == null) return "";
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 }

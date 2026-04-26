@@ -357,24 +357,22 @@ public class LLMClient implements AutoCloseable {
      * @param onError callback invoked with an error message if streaming fails
      */
     public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                var response = new StringBuilder();
-                ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
-                history.addUser(message);
-                LLMRequest request = buildRequestFromHistory(Map.of());
-                adapter.streamChat(request, token -> {
-                    response.append(token);
-                    onToken.accept(token);
-                });
-                history.addAssistant(response.toString());
-                syncTokenUsage(null);
-                compactHistoryIfNeeded(Map.of());
-            } catch (Exception e) {
-                onError.accept(e.getMessage());
-                logger.error("Stream failed: {}", e.getMessage());
-            }
-        }, executor);
+        try {
+            var response = new StringBuilder();
+            ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
+            history.addUser(message);
+            LLMRequest request = buildRequestFromHistory(Map.of());
+            adapter.streamChat(request, token -> {
+                response.append(token);
+                onToken.accept(token);
+            });
+            history.addAssistant(response.toString());
+            syncTokenUsage(null);
+            compactHistoryIfNeeded(Map.of());
+        } catch (Exception e) {
+            onError.accept(e.getMessage());
+            logger.error("Stream failed: {}", e.getMessage());
+        }
     }
 
     // ========== History Management ==========

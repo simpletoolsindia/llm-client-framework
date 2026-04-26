@@ -1,143 +1,45 @@
 # LLM Client Framework for Java
 
-Unified Java client for local and cloud LLM providers with one API, built-in tool calling, conversation history, context tracking, and automatic history compaction.
+Unified Java 21 client for local and cloud LLM providers with chat, streaming, tool calling, conversation history, context tracking, auto-compaction, and built-in tools.
 
 [![Maven Central](https://img.shields.io/badge/Maven-in.simpletools%3Allm--client--framework-2ea44f)](https://central.sonatype.com/artifact/in.simpletools/llm-client-framework)
 [![Java](https://img.shields.io/badge/Java-21+-1f6feb)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-## Version
-
-Current release:
+## Current Version
 
 ```text
-in.simpletools:llm-client-framework:1.0.6
+in.simpletools:llm-client-framework:1.0.7
 ```
 
-## What This Framework Gives You
+## What You Can Build
 
-- One client API across Ollama, OpenAI-compatible providers, Claude, Groq, Mistral, OpenRouter, and more
-- Sync, async, and streaming chat APIs
-- Lambda-based and annotation-based tool calling
-- In-memory or Redis-backed conversation history
-- Built-in system and HTTP tools
-- Context window tracking with visible used and remaining context
-- Best-effort automatic context window detection from model names
-- Automatic conversation compaction when the context window gets too full
-- Rolling summary preservation so important conversation state survives compaction
-- Optional verbose developer logging for request flow, token sync, tool execution, and compaction debugging
+- Local AI apps with Ollama, LM Studio, vLLM, or Jan.
+- Cloud AI apps with OpenAI, Claude, DeepSeek, NVIDIA, OpenRouter, Groq, or Mistral.
+- CLI tools, Spring services, desktop apps, batch jobs, and agent-like workflows.
+- LLM flows that call your Java methods as tools.
+- Long-running chats with history, token tracking, and automatic compaction.
+- Apps that need built-in file, shell, web search, webpage fetch, or HTTP tools.
 
-## Verbose Logging
+## Features
 
-For deeper debugging, developers can enable verbose logging.
-
-### Enable verbose logging
-
-```java
-import in.simpletools.llm.framework.utils.SimpleLogger;
-
-LLMClient client = LLMClient.ollama("gemma4:latest")
-    .withVerboseLogging(SimpleLogger.Level.DEBUG);
-```
-
-This keeps the framework logs developer-friendly by default, but when verbose mode is enabled it includes extra diagnostics such as:
-
-- request message count
-- tool count
-- response content length
-- token usage sync details
-- compaction summary generation details
-- current thread name in logs
-
-### Disable verbose logging
-
-```java
-client.withoutVerboseLogging();
-```
-
-## New Context Features
-
-The framework now supports automatic context management.
-
-### Automatic context window detection
-
-The framework detects common model context sizes automatically:
-
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest");
-System.out.println(client.getContextInfo().summary());
-```
-
-If you want to force a known value:
-
-```java
-client.withContextWindow(128000);
-```
-
-### Context usage visibility
-
-```java
-var info = client.getContextInfo();
-System.out.println(info.summary());
-System.out.println("Used: " + info.usedTokens());
-System.out.println("Remaining: " + info.remainingTokens());
-System.out.println("Usage %: " + info.usagePercent());
-```
-
-You can also project usage before sending the next turn:
-
-```java
-var projected = client.getProjectedContextInfo("Summarize the entire discussion.");
-System.out.println(projected.summary());
-```
-
-### Automatic compaction
-
-When the conversation gets too large, the framework can:
-
-1. ask the model to compress the conversation
-2. keep durable facts, decisions, constraints, and unresolved work
-3. replace older history with a compacted summary
-4. keep the most recent live turns
-
-Enable it like this:
-
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest")
-    .withAutoCompaction();
-```
-
-Or tune it:
-
-```java
-LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
-    .withAutoCompaction(85.0, 55.0, 6);
-```
-
-Meaning:
-
-- start compacting at `85%` usage
-- compact until usage is around `55%`
-- keep the last `6` recent non-system messages in full
-
-You can inspect the current rolling summary:
-
-```java
-System.out.println(client.getCompactedContextSummary());
-```
-
-Or compact manually:
-
-```java
-client.compactHistoryNow();
-```
-
-## Supported Providers
-
-| Category | Providers |
-|----------|-----------|
-| Local | Ollama, LM Studio, vLLM, Jan |
-| Cloud | OpenAI, Claude, DeepSeek, NVIDIA NIM, Groq, Mistral, OpenRouter |
+- One `LLMClient` API for local and cloud providers.
+- Blocking chat with `chat(...)`.
+- Async chat with `chatAsync(...)`.
+- Real streaming callbacks with `streamChat(...)`.
+- Lambda tool registration.
+- Annotation-driven tool registration with `@LLMTool` and `@ToolParam`.
+- Built-in system tools: file read/write/create/append/delete, directory listing, file search, grep, metadata, web search, webpage fetch, shell commands.
+- Built-in HTTP tools: GET, POST, PUT, PATCH, DELETE.
+- Configurable web search provider: DuckDuckGo HTML or SearXNG JSON.
+- In-memory conversation history.
+- Redis-backed history with fallback.
+- Context-window tracking.
+- Automatic context compaction with rolling summaries.
+- Manual compaction.
+- Verbose developer logging.
+- Provider-neutral request/response/message/tool models.
+- Javadocs designed for IDE autocomplete and generated API docs.
 
 ## Install
 
@@ -149,7 +51,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.6'
+    implementation 'in.simpletools:llm-client-framework:1.0.7'
 }
 ```
 
@@ -159,96 +61,539 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.6</version>
+    <version>1.0.7</version>
 </dependency>
 ```
 
-## Use In A New Project
+## Quick Start With Ollama
 
-### 1. Create a Java 21 Gradle app
+Start Ollama and pull a model:
 
-```groovy
-plugins {
-    id 'application'
-}
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.6'
-}
-
-application {
-    mainClass = 'demo.Main'
-}
+```bash
+ollama serve
+ollama pull gemma4:latest
 ```
 
-### 2. Add a basic main class
+Create a client:
 
 ```java
-package demo;
-
 import in.simpletools.llm.framework.client.LLMClient;
 
 public class Main {
     public static void main(String[] args) {
-        LLMClient client = LLMClient.ollama("gemma4:latest")
-            .withAutoCompaction()
-            .withVerboseLogging();
-
-        String reply = client.chat("Explain recursion in simple words.");
-        System.out.println(reply);
-        System.out.println(client.getContextInfo().summary());
+        try (LLMClient client = LLMClient.ollama("gemma4:latest")) {
+            String reply = client.chat("Explain Java records in simple words.");
+            System.out.println(reply);
+        }
     }
 }
 ```
 
-### 3. Run it
+## Provider Examples
 
-```bash
-./gradlew run
+### Ollama
+
+```java
+LLMClient client = LLMClient.ollama("gemma4:latest");
 ```
 
-### 4. Local setup for Ollama
+Custom Ollama URL:
 
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma4:latest
-ollama serve
+```java
+LLMClient client = LLMClient.ollama("http://localhost:11434", "gemma4:latest");
 ```
 
-## Use In An Existing Project
+### OpenAI
 
-Most teams should integrate this through one small service layer instead of calling the LLM directly from every controller or endpoint.
+```java
+LLMClient client = LLMClient.openAI(
+    "gpt-4o-mini",
+    System.getenv("OPENAI_API_KEY")
+);
+```
 
-### Plain Java service example
+### Claude
+
+```java
+LLMClient client = LLMClient.claude(
+    "claude-3-5-sonnet-20241022",
+    System.getenv("ANTHROPIC_API_KEY")
+);
+```
+
+### Groq
+
+```java
+LLMClient client = LLMClient.groq(
+    "llama-3.1-70b-versatile",
+    System.getenv("GROQ_API_KEY")
+);
+```
+
+### OpenRouter
+
+```java
+LLMClient client = LLMClient.openRouter(
+    "openai/gpt-4o-mini",
+    System.getenv("OPENROUTER_API_KEY")
+);
+```
+
+### Builder API
+
+Use the builder when you want custom config, history, adapter, executor, logger, or token tracker.
 
 ```java
 import in.simpletools.llm.framework.client.LLMClient;
+import in.simpletools.llm.framework.config.ClientConfig;
+import in.simpletools.llm.framework.config.Provider;
+import in.simpletools.llm.framework.history.ConversationHistory;
 
-public class AiService {
-    private final LLMClient client;
+LLMClient client = LLMClient.builder()
+    .config(
+        ClientConfig.of(Provider.OPENAI)
+            .model("gpt-4o-mini")
+            .apiKey(System.getenv("OPENAI_API_KEY"))
+            .temperature(0.2)
+            .timeoutSeconds(60)
+    )
+    .history(new ConversationHistory(100))
+    .build();
+```
 
-    public AiService() {
-        this.client = LLMClient.openAI(
-            "gpt-4o-mini",
-            System.getenv("OPENAI_API_KEY")
-        ).withAutoCompaction(85.0, 55.0, 6);
-    }
+## Chat
 
-    public String summarize(String text) {
-        return client.chat("Summarize this text:\n\n" + text);
-    }
+### Basic Chat
 
-    public String contextStats() {
-        return client.getContextInfo().summary();
+```java
+String reply = client.chat("Write a short welcome message.");
+System.out.println(reply);
+```
+
+### Chat With Per-Request Options
+
+Supported options include:
+
+- `system`: temporary system prompt for this request.
+- `temperature`: sampling temperature as a string.
+
+```java
+import java.util.Map;
+
+String reply = client.chat(
+    "Draft a short release note.",
+    Map.of(
+        "system", "You are a concise technical writer.",
+        "temperature", "0.2"
+    )
+);
+```
+
+## Streaming
+
+`streamChat(...)` calls your callback as chunks arrive from the provider and returns after streaming completes.
+
+```java
+client.streamChat(
+    "Count from 1 to 5.",
+    chunk -> System.out.print(chunk),
+    error -> System.err.println("Stream error: " + error)
+);
+```
+
+Simple overload:
+
+```java
+client.streamChat("Tell me a short story.", System.out::print);
+```
+
+Important notes:
+
+- The call is blocking until the stream completes.
+- The callback is invoked for each text chunk.
+- Conversation history is updated with the full streamed assistant response.
+- For OpenAI-compatible providers and Claude, SSE `data:` lines are parsed as they arrive.
+- For Ollama, JSON lines from `/api/chat` are parsed as they arrive.
+
+## Async Chat
+
+```java
+import java.util.concurrent.CompletableFuture;
+
+CompletableFuture<String> future = client.chatAsync("Summarize virtual threads.");
+String reply = future.join();
+```
+
+With options:
+
+```java
+CompletableFuture<String> future = client.chatAsync(
+    "Write a title.",
+    Map.of("temperature", "0.1")
+);
+```
+
+## Tool Calling
+
+Tool calling lets the model ask your Java code for data or actions.
+
+### Lambda Tool
+
+```java
+import in.simpletools.llm.framework.tool.ToolRegistry;
+import java.util.Map;
+
+client.tool(
+    "calculate",
+    "Evaluate a simple math expression",
+    args -> {
+        String expression = args.get("expression").toString();
+        return expression + " = 42";
+    },
+    Map.of(
+        "expression",
+        new ToolRegistry.ParamInfo(
+            "expression",
+            "Math expression to evaluate",
+            true,
+            String.class
+        )
+    )
+);
+
+String reply = client.chat("Use calculate for 25 * 4 + 10.");
+```
+
+### Annotation Tool
+
+```java
+import in.simpletools.llm.framework.tool.LLMTool;
+import in.simpletools.llm.framework.tool.ToolParam;
+
+public class TravelTools {
+    @LLMTool(name = "city_tip", description = "Return a short travel tip for a city")
+    public String cityTip(
+        @ToolParam(name = "city", description = "City name") String city,
+        @ToolParam(name = "season", description = "Travel season", required = false) String season
+    ) {
+        return "Travel tip for " + city + ": start early and pre-book major attractions.";
     }
 }
 ```
 
-### Spring Boot integration example
+Register and use it:
+
+```java
+client.registerTools(new TravelTools());
+
+String reply = client.chat("""
+    Use the city_tip tool for city=Jaipur and season=winter.
+    Keep the answer concise.
+    """);
+```
+
+### Retry Tool Calls
+
+```java
+client.withRetry(5);
+```
+
+Per-tool retry using annotation:
+
+```java
+@LLMTool(
+    name = "fetch_order",
+    description = "Fetch order details",
+    maxRetries = 3,
+    retryDelayMs = 500,
+    backoffMultiplier = 2.0
+)
+public String fetchOrder(@ToolParam(name = "order_id") String orderId) {
+    return "Order " + orderId + " is shipped.";
+}
+```
+
+## Built-In System Tools
+
+Register all system tools:
+
+```java
+client.withSystemTools();
+```
+
+Register only one category:
+
+```java
+client.withSystemTools("file");  // file, directory, find, grep, metadata
+client.withSystemTools("web");   // web_search, fetch_webpage
+client.withSystemTools("shell"); // run_bash
+```
+
+Available tools:
+
+| Tool | What it does |
+|---|---|
+| `read_file` | Read a text file |
+| `write_file` | Write or overwrite a file |
+| `create_file` | Create or touch a file |
+| `append_file` | Append text to a file |
+| `delete_file` | Delete a file or empty directory |
+| `list_dir` | List directory contents |
+| `find_files` | Find files by glob |
+| `grep` | Search text in files |
+| `path_exists` | Check whether a path exists |
+| `file_info` | Return file metadata |
+| `web_search` | Search the web |
+| `fetch_webpage` | Fetch and strip webpage text |
+| `run_bash` | Run a shell command |
+
+Security note: only enable file and shell tools for trusted prompts.
+
+## Web Search Configuration
+
+DuckDuckGo HTML search is the default:
+
+```java
+import in.simpletools.llm.framework.tools.SystemTools;
+
+SystemTools.useDuckDuckGoSearch();
+```
+
+Use a custom DuckDuckGo-compatible URL template:
+
+```java
+SystemTools.useDuckDuckGoSearch("https://html.duckduckgo.com/html/?q=%s");
+```
+
+Use SearXNG:
+
+```java
+SystemTools.useSearxngSearch("https://search.example.com");
+```
+
+System properties are supported:
+
+```bash
+-Dsimpletools.webSearchProvider=searxng
+-Dsimpletools.searxngBaseUrl=https://search.example.com
+```
+
+Example:
+
+```java
+client.withSystemTools("web");
+String reply = client.chat("Search the web for Java 21 virtual threads and summarize 3 results.");
+```
+
+## Built-In HTTP Tools
+
+Register HTTP tools:
+
+```java
+client.withHttpTools();
+```
+
+Available tools:
+
+| Tool | What it does |
+|---|---|
+| `http_get` | GET a URL with optional headers and query params |
+| `http_post` | POST a body |
+| `http_put` | PUT a body |
+| `http_patch` | PATCH a body |
+| `http_delete` | DELETE a resource |
+
+Example:
+
+```java
+client.withHttpTools();
+
+String reply = client.chat("""
+    Use http_get to call https://api.github.com/repos/simpletoolsindia/llm-client-framework.
+    Summarize the repository metadata.
+    """);
+```
+
+## Conversation History
+
+History is enabled by default in memory.
+
+```java
+client.chat("My name is Priya.");
+client.chat("What is my name?");
+```
+
+Inspect history:
+
+```java
+client.getHistory().getMessages().forEach(System.out::println);
+```
+
+Clear history:
+
+```java
+client.clearHistory();
+```
+
+Remove latest turns:
+
+```java
+client.clearLastN(2);
+```
+
+Use a custom in-memory limit:
+
+```java
+import in.simpletools.llm.framework.history.ConversationHistory;
+
+LLMClient client = LLMClient.builder()
+    .config(ClientConfig.of(Provider.OLLAMA).model("gemma4:latest"))
+    .history(new ConversationHistory(50))
+    .build();
+```
+
+## Redis History
+
+Use Redis-backed history:
+
+```java
+LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
+    .withRedisHistory("user-123");
+```
+
+With host and port:
+
+```java
+client.withRedisHistory("user-123", "localhost", 6379);
+```
+
+If Redis is unavailable, the framework falls back to in-memory history.
+
+## Context Tracking
+
+Print current context usage:
+
+```java
+System.out.println(client.getContextInfo().summary());
+```
+
+Read individual fields:
+
+```java
+var info = client.getContextInfo();
+System.out.println(info.usedTokens());
+System.out.println(info.remainingTokens());
+System.out.println(info.usagePercent());
+```
+
+Project usage before sending the next message:
+
+```java
+var projected = client.getProjectedContextInfo("Summarize everything so far.");
+System.out.println(projected.summary());
+```
+
+Set a manual context window:
+
+```java
+client.withContextWindow(128000);
+```
+
+## Automatic Context Compaction
+
+Auto-compaction keeps long-running chats from overflowing the model context window.
+
+Enable defaults:
+
+```java
+client.withAutoCompaction();
+```
+
+Tune thresholds:
+
+```java
+client.withAutoCompaction(85.0, 55.0, 6);
+```
+
+Meaning:
+
+- Start compaction when estimated usage reaches `85%`.
+- Compact toward about `55%`.
+- Keep the latest `6` non-system messages in full.
+
+Inspect the rolling summary:
+
+```java
+String summary = client.getCompactedContextSummary();
+```
+
+Compact manually:
+
+```java
+client.compactHistoryNow();
+```
+
+Disable compaction:
+
+```java
+client.withoutAutoCompaction();
+```
+
+## Verbose Logging
+
+```java
+import in.simpletools.llm.framework.utils.SimpleLogger;
+
+client.withVerboseLogging(SimpleLogger.Level.DEBUG);
+```
+
+Disable verbose mode:
+
+```java
+client.withoutVerboseLogging();
+```
+
+Set log level only:
+
+```java
+client.setLogLevel(SimpleLogger.Level.WARN);
+```
+
+Verbose logs include:
+
+- request message count
+- tool count
+- response content length
+- token usage sync details
+- compaction details
+- thread names
+
+## Provider-Neutral Model API
+
+Advanced users can build requests manually:
+
+```java
+import in.simpletools.llm.framework.model.LLMRequest;
+import in.simpletools.llm.framework.model.Message;
+
+LLMRequest request = LLMRequest.builder()
+    .model("gemma4:latest")
+    .system("You are concise.")
+    .user("Explain the framework.")
+    .temperature(0.2)
+    .build();
+```
+
+Build multimodal messages:
+
+```java
+Message message = Message.user()
+    .text("Describe this image.")
+    .image("https://example.com/image.png")
+    .build();
+```
+
+## Spring Boot Example
 
 ```java
 import in.simpletools.llm.framework.client.LLMClient;
@@ -257,7 +602,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class AiConfig {
-    @Bean
+    @Bean(destroyMethod = "close")
     LLMClient llmClient() {
         return LLMClient.openAI(
             "gpt-4o-mini",
@@ -279,305 +624,144 @@ public class SummaryService {
         this.llmClient = llmClient;
     }
 
-    public String summarizeTicket(String ticket) {
-        return llmClient.chat("Summarize this support ticket:\n\n" + ticket);
+    public String summarize(String text) {
+        return llmClient.chat("Summarize this text:\n\n" + text);
     }
 
-    public String getContextUsage() {
-        return llmClient.getContextInfo().summary();
+    public void streamSummary(String text) {
+        llmClient.streamChat(
+            "Summarize this text:\n\n" + text,
+            System.out::print
+        );
     }
 }
 ```
 
-### Recommended migration approach
-
-1. Add the dependency from Maven Central.
-2. Create one shared `LLMClient` bean or singleton.
-3. Wrap it in your own service class.
-4. Turn on auto-compaction for long-running chat flows.
-5. Surface `getContextInfo()` in logs or admin dashboards.
-6. Add tools only to flows that really need them.
-
-## Provider Examples
-
-### Ollama
+## Complete CLI Example
 
 ```java
-LLMClient client = LLMClient.ollama("gemma4:latest")
-    .withAutoCompaction();
-```
+package demo;
 
-### OpenAI
-
-```java
-LLMClient client = LLMClient.openAI(
-    "gpt-4o-mini",
-    System.getenv("OPENAI_API_KEY")
-).withAutoCompaction(85.0, 55.0, 6);
-```
-
-### Claude
-
-```java
-LLMClient client = LLMClient.claude(
-    "claude-3-5-sonnet-20241022",
-    System.getenv("ANTHROPIC_API_KEY")
-).withAutoCompaction();
-```
-
-### Groq
-
-```java
-LLMClient client = LLMClient.groq(
-    "llama-3.1-70b-versatile",
-    System.getenv("GROQ_API_KEY")
-);
-```
-
-### Builder API
-
-```java
-import in.simpletools.llm.framework.client.LLMClient;
-import in.simpletools.llm.framework.config.ClientConfig;
-import in.simpletools.llm.framework.config.Provider;
-import in.simpletools.llm.framework.history.ConversationHistory;
-
-LLMClient client = LLMClient.builder()
-    .config(
-        ClientConfig.of(Provider.OPENAI)
-            .model("gpt-4o-mini")
-            .apiKey(System.getenv("OPENAI_API_KEY"))
-            .timeoutSeconds(60)
-    )
-    .history(new ConversationHistory(50))
-    .build()
-    .withAutoCompaction(85.0, 55.0, 6);
-```
-
-## Tool Calling
-
-### Register a simple lambda tool
-
-```java
-import in.simpletools.llm.framework.client.LLMClient;
-import in.simpletools.llm.framework.tool.ToolRegistry;
-import java.util.Map;
-
-LLMClient client = LLMClient.ollama("gemma4:latest");
-
-client.tool(
-    "calculate",
-    "Evaluate a math expression",
-    args -> {
-        String expression = args.get("expression").toString();
-        return expression + " = 42";
-    },
-    Map.of(
-        "expression",
-        new ToolRegistry.ParamInfo(
-            "expression",
-            "Expression to evaluate",
-            true,
-            String.class
-        )
-    )
-);
-
-String reply = client.chat("Use the calculate tool for 25 * 4 + 10.");
-```
-
-### Annotation-driven tools
-
-```java
 import in.simpletools.llm.framework.client.LLMClient;
 import in.simpletools.llm.framework.tool.LLMTool;
 import in.simpletools.llm.framework.tool.ToolParam;
 
-class BusinessTools {
-    @LLMTool(name = "ticket_status", description = "Get ticket status")
-    public String ticketStatus(@ToolParam("id") String id) {
-        return "Ticket " + id + " is IN_PROGRESS";
+public class Main {
+    public static void main(String[] args) {
+        try (LLMClient client = LLMClient.ollama("gemma4:latest")
+                .withAutoCompaction()
+                .withSystemTools("web")) {
+
+            client.registerTools(new TravelTools());
+
+            client.streamChat(
+                "Use city_tip for Jaipur in winter, then give a concise answer.",
+                System.out::print,
+                error -> System.err.println("Error: " + error)
+            );
+        }
+    }
+
+    public static final class TravelTools {
+        @LLMTool(name = "city_tip", description = "Return a city-specific travel tip")
+        public String cityTip(
+            @ToolParam(name = "city", description = "City name") String city,
+            @ToolParam(name = "season", description = "Travel season") String season
+        ) {
+            return "Travel tip for " + city + " in " + season
+                + ": start early and pre-book major attractions.";
+        }
     }
 }
-
-LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"));
-client.registerTools(new BusinessTools());
 ```
 
-## Built-In Tools
+## Examples In This Repository
 
-### System tools
-
-```java
-LLMClient client = LLMClient.ollama("gemma4:latest")
-    .withSystemTools();
-```
-
-This enables:
-
-- `read_file`
-- `write_file`
-- `list_dir`
-- `find_files`
-- `grep`
-- `web_search`
-- `fetch_webpage`
-- `run_bash`
-
-Configure `web_search` to use DuckDuckGo HTML search, which is the default:
-
-```java
-SystemTools.useDuckDuckGoSearch();
-```
-
-Or point it at a SearXNG instance:
-
-```java
-SystemTools.useSearxngSearch("https://search.example.com");
-```
-
-Runtime properties are also supported:
-
-```bash
--Dsimpletools.webSearchProvider=searxng
--Dsimpletools.searxngBaseUrl=https://search.example.com
-```
-
-### HTTP tools
-
-```java
-LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
-    .withHttpTools();
-```
-
-This enables:
-
-- `http_get`
-- `http_post`
-- `http_put`
-- `http_patch`
-- `http_delete`
-
-## Async, Streaming, and History
-
-### Async
-
-```java
-CompletableFuture<String> future = client.chatAsync("Write a short release note.");
-System.out.println(future.join());
-```
-
-### Streaming
-
-```java
-client.streamChat(
-    "Count from 1 to 5",
-    token -> System.out.print(token),
-    error -> System.err.println(error)
-);
-```
-
-### Redis-backed history
-
-```java
-LLMClient client = LLMClient.openAI("gpt-4o-mini", System.getenv("OPENAI_API_KEY"))
-    .withRedisHistory("user-123")
-    .withAutoCompaction();
-```
-
-## Example Project
-
-A standalone example project is included here:
-
-- [examples/auto-compaction-demo](examples/auto-compaction-demo/README.md)
-
-It shows:
-
-- local Ollama usage
-- automatic context tracking
-- auto-compaction configuration
-- verbose logging
-- printing current context stats and compacted summary
-
-## Publish This Library To Maven Central
-
-This repository publishes under:
-
-```text
-groupId    = in.simpletools
-artifactId = llm-client-framework
-```
-
-### Release requirements
-
-1. Verified `in.simpletools` namespace in Maven Central Portal
-2. Central Portal user token
-3. GPG signing key
-4. Java 21 in local or CI environment
-
-### Environment variables
-
-```bash
-export CENTRAL_PORTAL_USERNAME=your_token_username
-export CENTRAL_PORTAL_PASSWORD=your_token_password
-export ORG_GRADLE_PROJECT_signingKey='ASCII_ARMORED_GPG_PRIVATE_KEY'
-export ORG_GRADLE_PROJECT_signingPassword='your_gpg_passphrase'
-```
-
-### Release
-
-```bash
-./gradlew publish
-```
-
-For OSSRH compatibility handoff:
-
-```bash
-curl -X POST \
-  -H "Authorization: Bearer <base64(username:password)>" \
-  "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/in.simpletools?publishing_type=automatic"
-```
+- `src/main/java/in/simpletools/llm/framework/example/OllamaDemo.java`
+- `examples/auto-compaction-demo`
 
 ## Project Structure
 
 ```text
 src/main/java/in/simpletools/llm/framework/
-├── adapter/
-├── client/
-├── config/
-├── history/
-├── model/
-├── tool/
-├── tools/
-├── utils/
-└── example/
-
-examples/
-└── auto-compaction-demo/
+├── adapter/   Provider adapters
+├── client/    LLMClient and factories
+├── config/    ClientConfig and Provider
+├── history/   Conversation and token tracking
+├── model/     Request, response, message, tool models
+├── tool/      Tool annotations and registry
+├── tools/     Built-in system and HTTP tools
+└── utils/     Retry and logging helpers
 ```
 
 ## Troubleshooting
 
-### `Connection refused` with Ollama
+### Ollama connection refused
 
 ```bash
 ollama serve
 curl http://localhost:11434/api/tags
 ```
 
-### `401 Unauthorized`
+### Streaming prints nothing
 
-Check your provider API key or Maven Central publishing token.
+Check that:
 
-### `publish` fails
+- you are using `1.0.7` or newer
+- the model/provider supports streaming
+- your program does not exit before `streamChat(...)` returns
+- your callback flushes output if needed
 
-Check:
+```java
+client.streamChat("Hello", chunk -> {
+    System.out.print(chunk);
+    System.out.flush();
+});
+```
 
-- namespace ownership for `in.simpletools`
-- Central Portal token username and password
-- GPG public key availability on supported keyservers
-- required POM metadata
-- Java 21 availability
+### 401 Unauthorized
+
+Check the provider API key:
+
+```java
+System.getenv("OPENAI_API_KEY");
+System.getenv("ANTHROPIC_API_KEY");
+```
+
+### SearXNG search returns no results
+
+Verify your instance supports JSON output:
+
+```bash
+curl 'https://search.example.com/search?q=java&format=json'
+```
+
+### Maven cannot find the latest version
+
+Refresh Gradle dependencies:
+
+```bash
+./gradlew --refresh-dependencies build
+```
+
+## Publishing Notes
+
+The package is published under:
+
+```text
+groupId    = in.simpletools
+artifactId = llm-client-framework
+```
+
+Release checklist:
+
+1. Update `version` in `build.gradle`.
+2. Update README dependency examples.
+3. Run `./gradlew clean test javadoc publishToMavenLocal`.
+4. Commit and push.
+5. Run `./gradlew publishToCentral`.
+6. Trigger the OSSRH Central Portal upload for `in.simpletools`.
+7. Verify Maven Central metadata.
 
 ## License
 

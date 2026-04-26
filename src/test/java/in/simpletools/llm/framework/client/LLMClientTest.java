@@ -7,11 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import in.simpletools.llm.framework.adapter.ProviderAdapter;
 import in.simpletools.llm.framework.config.ClientConfig;
 import in.simpletools.llm.framework.config.Provider;
+import in.simpletools.llm.framework.adapter.OpenAIAdapter;
 import in.simpletools.llm.framework.model.LLMRequest;
 import in.simpletools.llm.framework.model.LLMResponse;
 import in.simpletools.llm.framework.model.Message;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import in.simpletools.llm.framework.utils.SimpleLogger;
@@ -65,6 +73,91 @@ class LLMClientTest {
 
         assertTrue(client.getLogger().isVerbose());
         assertTrue(client.getLogger().getLevel() == SimpleLogger.Level.DEBUG);
+    }
+
+    @Test
+    void streamChatBlocksUntilCompleteAndStoresAssistantMessage() {
+        LLMClient client = newClient();
+        List<String> chunks = new ArrayList<>();
+
+        client.streamChat("stream this", chunks::add);
+
+        assertTrue(chunks.size() == 1);
+        assertTrue(chunks.get(0).startsWith("Reply: stream this"));
+        assertTrue(client.getHistory().getMessages().stream()
+            .anyMatch(message -> message.role() == Message.Role.assistant
+                && message.content() != null
+                && message.content().startsWith("Reply: stream this")));
+    }
+
+    @Test
+    void openAICompatibleAdapterDeliversChunksBeforeResponseCompletes() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        CountDownLatch firstChunkSent = new CountDownLatch(1);
+        CountDownLatch finishResponse = new CountDownLatch(1);
+
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            var out = exchange.getResponseBody();
+            out.write("""
+                data: {"choices":[{"delta":{"content":"hel"}}]}
+
+                """.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            firstChunkSent.countDown();
+            try {
+                finishResponse.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            out.write("""
+                data: {"choices":[{"delta":{"content":"lo"}}]}
+
+                data: [DONE]
+
+                """.getBytes(StandardCharsets.UTF_8));
+            out.close();
+        });
+        server.start();
+
+        try {
+            ClientConfig config = ClientConfig.of(Provider.OPENAI)
+                .baseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1")
+                .model("test-model")
+                .apiKey("test-key");
+            OpenAIAdapter adapter = new OpenAIAdapter(config);
+            List<String> chunks = new ArrayList<>();
+            AtomicLong firstChunkAt = new AtomicLong(0);
+
+            Thread streamThread = new Thread(() -> adapter.streamChat(
+                LLMRequest.builder().model("test-model").user("hello").build(),
+                chunk -> {
+                    chunks.add(chunk);
+                    firstChunkAt.compareAndSet(0, System.nanoTime());
+                }
+            ));
+
+            long startedAt = System.nanoTime();
+            streamThread.start();
+
+            assertTrue(firstChunkSent.await(1, TimeUnit.SECONDS));
+            while (firstChunkAt.get() == 0 && System.nanoTime() - startedAt < TimeUnit.SECONDS.toNanos(1)) {
+                Thread.sleep(10);
+            }
+
+            assertTrue(firstChunkAt.get() != 0);
+            assertTrue(streamThread.isAlive());
+
+            finishResponse.countDown();
+            streamThread.join(2_000);
+
+            assertTrue(chunks.size() == 2);
+            assertTrue(String.join("", chunks).equals("hello"));
+        } finally {
+            finishResponse.countDown();
+            server.stop(0);
+        }
     }
 
     private LLMClient newClient() {

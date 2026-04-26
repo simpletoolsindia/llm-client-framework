@@ -2,9 +2,14 @@ package in.simpletools.llm.framework.adapter;
 
 import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
+import java.io.BufferedReader;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.net.http.*;
 import java.net.URI;
+import java.net.URL;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -56,29 +61,47 @@ public class OllamaAdapter implements ProviderAdapter {
 
     @Override
     public void streamChat(LLMRequest request, Consumer<String> onChunk) {
+        HttpURLConnection conn = null;
         try {
             var reqMap = buildRequestMap(request, true);
             String json = gson.toJson(reqMap);
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/api/chat"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .timeout(Duration.ofMinutes(5))
-                .build();
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            for (String line : resp.body().split("\n")) {
-                if (line.isEmpty()) continue;
-                @SuppressWarnings("unchecked")
-                Map<String, Object> chunk = gson.fromJson(line, Map.class);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> msg = (Map<String, Object>) chunk.get("message");
-                if (msg != null) {
-                    Object content = msg.get("content");
-                    if (content != null) onChunk.accept(content.toString());
+            URL url = URI.create(baseUrl + "/api/chat").toURL();
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setConnectTimeout(30_000);
+            conn.setReadTimeout(300_000);
+            conn.setDoOutput(true);
+
+            try (var writer = new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8)) {
+                writer.write(json);
+            }
+
+            int status = conn.getResponseCode();
+            if (status != 200) {
+                throw new RuntimeException("Ollama API error: HTTP " + status);
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.isEmpty()) continue;
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> chunk = gson.fromJson(line, Map.class);
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> msg = (Map<String, Object>) chunk.get("message");
+                    if (msg != null) {
+                        Object content = msg.get("content");
+                        if (content != null) onChunk.accept(content.toString());
+                    }
                 }
             }
         } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
+        finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     private Map<String, Object> buildRequestMap(LLMRequest request, boolean stream) {

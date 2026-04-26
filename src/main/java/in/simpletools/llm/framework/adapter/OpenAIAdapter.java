@@ -3,9 +3,14 @@ package in.simpletools.llm.framework.adapter;
 import in.simpletools.llm.framework.config.ClientConfig;
 import in.simpletools.llm.framework.model.*;
 import com.google.gson.*;
+import java.io.BufferedReader;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.net.http.*;
 import java.net.URI;
+import java.net.URL;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -56,30 +61,48 @@ public class OpenAIAdapter implements ProviderAdapter {
 
     @Override
     public void streamChat(LLMRequest request, Consumer<String> onChunk) {
+        HttpURLConnection conn = null;
         try {
             Map<String, Object> reqMap = new HashMap<>(request.toMap());
             reqMap.put("stream", true);
             String json = gson.toJson(reqMap);
 
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(config.baseUrl() + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + config.apiKey())
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .timeout(Duration.ofMinutes(5))
-                .build();
+            URL url = URI.create(config.baseUrl() + "/chat/completions").toURL();
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Authorization", "Bearer " + config.apiKey());
+            conn.setConnectTimeout(30_000);
+            conn.setReadTimeout(300_000);
+            conn.setDoOutput(true);
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            for (String line : resp.body().split("\n")) {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6);
-                    if (data.equals("[DONE]")) break;
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> chunk = gson.fromJson(data, Map.class);
-                    parseChunk(chunk, onChunk);
+            try (var writer = new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8)) {
+                writer.write(json);
+            }
+
+            int status = conn.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("API error: HTTP " + status + " " + readErrorBody(conn));
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data: ")) {
+                        String data = line.substring(6).trim();
+                        if (data.equals("[DONE]")) break;
+                        if (data.isEmpty()) continue;
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> chunk = gson.fromJson(data, Map.class);
+                        parseChunk(chunk, onChunk);
+                    }
                 }
             }
         } catch (Exception e) { onChunk.accept("Error: " + e.getMessage()); }
+        finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     protected void parseChunk(Map<String, Object> chunk, Consumer<String> onChunk) {
@@ -166,5 +189,14 @@ public class OpenAIAdapter implements ProviderAdapter {
 
     protected LLMResponse createErrorResponse(String error) {
         return new LLMResponse(null, new Message(Message.Role.assistant, "Error: " + error), "error", null, null, true, null, null, null);
+    }
+
+    private String readErrorBody(HttpURLConnection conn) {
+        try (var stream = conn.getErrorStream()) {
+            if (stream == null) return "";
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 }
