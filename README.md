@@ -207,6 +207,59 @@ Important notes:
 - Conversation history is updated with the full streamed assistant response.
 - For OpenAI-compatible providers and Claude, SSE `data:` lines are parsed as they arrive.
 - For Ollama, JSON lines from `/api/chat` are parsed as they arrive.
+- When tools are registered, `streamChat(...)` runs the tool-capable chat flow and prints the final tool-assisted reply.
+
+## Live Status Events
+
+Use live status events when building IDE agents, terminal assistants, or Claude Code style applications. Events tell your UI what the framework is doing while the request is still running.
+
+```java
+import in.simpletools.llm.framework.client.LLMStatus;
+
+client.onStatus(status -> {
+    switch (status.type()) {
+        case CHAT_STARTED -> System.out.println("Thinking...");
+        case TOOL_CALL_REQUESTED -> System.out.println("Tool requested: " + status.toolName());
+        case TOOL_EXECUTION_STARTED -> System.out.println("Running: " + status.toolName());
+        case TOOL_RESPONSE_VALIDATED -> System.out.println("Tool result validated");
+        case CONTINUATION_STARTED -> System.out.println("Continuing with tool result...");
+        case STREAM_CHUNK -> System.out.print(status.result());
+        case CHAT_COMPLETED -> System.out.println("Done");
+        case ERROR -> System.err.println(status.message());
+        default -> { }
+    }
+});
+
+String reply = client.chat("Use city_tip for Jaipur in winter.");
+```
+
+Per streaming call:
+
+```java
+client.streamChatWithStatus(
+    "Use city_tip for Jaipur in winter.",
+    System.out::print,
+    status -> System.err.println(status.type() + " " + status.toolName())
+);
+```
+
+Status types include:
+
+- `CHAT_STARTED`
+- `REQUEST_SENT`
+- `RESPONSE_RECEIVED`
+- `STREAM_STARTED`
+- `STREAM_CHUNK`
+- `STREAM_COMPLETED`
+- `TOOL_CALL_REQUESTED`
+- `TOOL_EXECUTION_STARTED`
+- `TOOL_EXECUTION_COMPLETED`
+- `TOOL_EXECUTION_FAILED`
+- `TOOL_RESPONSE_VALIDATED`
+- `TOOL_RESPONSE_APPENDED`
+- `CONTINUATION_STARTED`
+- `CHAT_COMPLETED`
+- `ERROR`
 
 ## Async Chat
 

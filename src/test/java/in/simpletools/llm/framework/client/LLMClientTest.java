@@ -113,6 +113,32 @@ class LLMClientTest {
     }
 
     @Test
+    void statusListenerReportsToolLifecycle() {
+        ClientConfig config = ClientConfig.of(Provider.OLLAMA).model("gemma4:latest");
+        LLMClient client = LLMClient.builder()
+            .config(config)
+            .adapter(new ToolCallingAdapter())
+            .build();
+        client.tool("city_tip", "Return a city tip", args ->
+            "Travel tip for " + args.get("city") + " in " + args.get("season") + ": start early.");
+        List<LLMStatus.Type> types = new ArrayList<>();
+
+        String reply = client
+            .onStatus(status -> types.add(status.type()))
+            .chat("Use city_tip for Jaipur in winter.");
+
+        assertTrue(reply.contains("Travel tip for Jaipur in winter: start early."));
+        assertTrue(types.contains(LLMStatus.Type.CHAT_STARTED));
+        assertTrue(types.contains(LLMStatus.Type.TOOL_CALL_REQUESTED));
+        assertTrue(types.contains(LLMStatus.Type.TOOL_EXECUTION_STARTED));
+        assertTrue(types.contains(LLMStatus.Type.TOOL_EXECUTION_COMPLETED));
+        assertTrue(types.contains(LLMStatus.Type.TOOL_RESPONSE_VALIDATED));
+        assertTrue(types.contains(LLMStatus.Type.TOOL_RESPONSE_APPENDED));
+        assertTrue(types.contains(LLMStatus.Type.CONTINUATION_STARTED));
+        assertTrue(types.contains(LLMStatus.Type.CHAT_COMPLETED));
+    }
+
+    @Test
     void openAICompatibleAdapterDeliversChunksBeforeResponseCompletes() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         CountDownLatch firstChunkSent = new CountDownLatch(1);

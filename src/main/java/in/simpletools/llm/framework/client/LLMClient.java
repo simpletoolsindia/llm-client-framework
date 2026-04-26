@@ -27,6 +27,7 @@ public class LLMClient implements AutoCloseable {
     private Retry.RetryConfig retryConfig;
     private final ExecutorService executor;
     private TokenTracker tokenTracker;
+    private Consumer<LLMStatus> statusListener = status -> {};
     private boolean autoCompactEnabled = true;
     private double autoCompactTriggerPercent = 85.0;
     private double autoCompactTargetPercent = 55.0;
@@ -350,6 +351,44 @@ public class LLMClient implements AutoCloseable {
     }
 
     /**
+     * Stream a chat reply while also receiving live lifecycle status events.
+     *
+     * <p>Use this overload for terminal, IDE, and agent-style applications that
+     * need to show model/tool progress while the request is running.</p>
+     *
+     * @param message user prompt
+     * @param onToken callback invoked for each text chunk or final tool-assisted reply
+     * @param onStatus callback invoked for chat, streaming, and tool lifecycle events
+     */
+    public void streamChatWithStatus(String message, Consumer<String> onToken, Consumer<LLMStatus> onStatus) {
+        Consumer<LLMStatus> previous = this.statusListener;
+        this.statusListener = combineStatusListeners(previous, onStatus);
+        try {
+            streamChat(message, onToken);
+        } finally {
+            this.statusListener = previous;
+        }
+    }
+
+    /**
+     * Stream a chat reply with explicit error handling and per-call status events.
+     *
+     * @param message user prompt
+     * @param onToken callback invoked for each text chunk or final tool-assisted reply
+     * @param onError callback invoked with an error message if streaming fails
+     * @param onStatus callback invoked for chat, streaming, and tool lifecycle events
+     */
+    public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError, Consumer<LLMStatus> onStatus) {
+        Consumer<LLMStatus> previous = this.statusListener;
+        this.statusListener = combineStatusListeners(previous, onStatus);
+        try {
+            streamChat(message, onToken, onError);
+        } finally {
+            this.statusListener = previous;
+        }
+    }
+
+    /**
      * Stream a chat reply with explicit error handling.
      *
      * @param message user prompt
@@ -365,17 +404,23 @@ public class LLMClient implements AutoCloseable {
             }
 
             var response = new StringBuilder();
+            emitStatus(LLMStatus.of(LLMStatus.Type.STREAM_STARTED, "Streaming chat started"));
             ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
             history.addUser(message);
             LLMRequest request = buildRequestFromHistory(Map.of());
+            emitStatus(LLMStatus.of(LLMStatus.Type.REQUEST_SENT, "Streaming request sent"));
             adapter.streamChat(request, token -> {
                 response.append(token);
+                emitStatus(LLMStatus.result(LLMStatus.Type.STREAM_CHUNK, "Streaming chunk received", token));
                 onToken.accept(token);
             });
             history.addAssistant(response.toString());
             syncTokenUsage(null);
             compactHistoryIfNeeded(Map.of());
+            emitStatus(LLMStatus.result(LLMStatus.Type.STREAM_COMPLETED, "Streaming completed", response.toString()));
+            emitStatus(LLMStatus.of(LLMStatus.Type.CHAT_COMPLETED, "Chat completed"));
         } catch (Exception e) {
+            emitStatus(LLMStatus.error("Stream failed", e));
             onError.accept(e.getMessage());
             logger.error("Stream failed: {}", e.getMessage());
         }
@@ -515,6 +560,28 @@ public class LLMClient implements AutoCloseable {
     /** @return logger used by this client */
     public SimpleLogger getLogger() { return logger; }
 
+    /**
+     * Register a live status listener for all future requests made by this client.
+     *
+     * <p>The listener receives typed {@link LLMStatus} events for chat start,
+     * request send, response receipt, streaming chunks, tool-call requests, tool
+     * execution start/completion/failure, tool-response validation, continuation,
+     * completion, and errors.</p>
+     *
+     * @param listener callback invoked for lifecycle events; {@code null} disables status callbacks
+     * @return this client for fluent chaining
+     */
+    public LLMClient onStatus(Consumer<LLMStatus> listener) {
+        this.statusListener = listener != null ? listener : status -> {};
+        return this;
+    }
+
+    /** @return this client after removing the current live status listener */
+    public LLMClient clearStatusListener() {
+        this.statusListener = status -> {};
+        return this;
+    }
+
     /** Shut down the client's executor. Use after finishing with long-lived clients. */
     @Override
     public void close() {
@@ -523,6 +590,7 @@ public class LLMClient implements AutoCloseable {
 
     // ========== Core Processing ==========
     private String processUserMessage(Message message, Map<String, String> options) {
+        emitStatus(LLMStatus.of(LLMStatus.Type.CHAT_STARTED, "Chat started"));
         ensureContextCapacity(List.of(message), options);
         history.add(message);
         syncTokenUsage(null);
@@ -540,13 +608,19 @@ public class LLMClient implements AutoCloseable {
             + " | messages=" + request.messages().size()
             + " | tools=" + request.tools().size()
             + " | context=" + tokenTracker.getContextInfo().summary());
+        emitStatus(LLMStatus.of(LLMStatus.Type.REQUEST_SENT, "Request sent to model"));
         LLMResponse response = adapter.chat(request);
+        emitStatus(LLMStatus.of(LLMStatus.Type.RESPONSE_RECEIVED, "Model response received"));
         logger.debugVerbose(() -> "Response details | model=" + response.model()
             + " | finishReason=" + response.finishReason()
             + " | contentChars=" + safeLength(response.getContentOrEmpty()));
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
+            response.getToolCalls().forEach(call -> emitStatus(LLMStatus.tool(
+                LLMStatus.Type.TOOL_CALL_REQUESTED,
+                call.function() != null ? call.function().name() : "unknown",
+                call.function() != null ? call.function().arguments() : Map.of())));
             history.add(response.message());
             syncTokenUsage(response);
             return handleToolCallsAsync(response.getToolCalls()).join();
@@ -556,6 +630,7 @@ public class LLMClient implements AutoCloseable {
         syncTokenUsage(response);
         compactHistoryIfNeeded(options);
         logger.debug("Response: {} chars", reply.length());
+        emitStatus(LLMStatus.result(LLMStatus.Type.CHAT_COMPLETED, "Chat completed", reply));
         return reply;
     }
 
@@ -578,6 +653,11 @@ public class LLMClient implements AutoCloseable {
                     Message toolMsg = Message.ofTool(results.get(i));
                     toolMsg = toolMsg.withName(call.function() != null ? call.function().name() : null);
                     history.add(toolMsg);
+                    emitStatus(LLMStatus.toolResult(
+                        LLMStatus.Type.TOOL_RESPONSE_APPENDED,
+                        call.function() != null ? call.function().name() : "unknown",
+                        call.function() != null ? call.function().arguments() : Map.of(),
+                        results.get(i)));
                 });
                 syncTokenUsage(null);
                 return continueConversation();
@@ -589,17 +669,26 @@ public class LLMClient implements AutoCloseable {
             String toolName = call.function().name();
             Map<String, Object> args = call.function().arguments();
             ToolRegistry.ToolInfo info = toolRegistry.get(toolName);
+            emitStatus(LLMStatus.tool(LLMStatus.Type.TOOL_EXECUTION_STARTED, toolName, args));
 
             if (info == null) {
                 logger.warn("Tool not found: {}", toolName);
-                return "{\"error\": \"Tool not found: " + toolName + "\"}";
+                String result = "{\"error\": \"Tool not found: " + toolName + "\"}";
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
+                return result;
             }
 
             try {
                 Object result = info.invoke(args);
-                return new com.google.gson.Gson().toJson(result);
+                String json = new com.google.gson.Gson().toJson(result);
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_COMPLETED, toolName, args, json));
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, json));
+                return json;
             } catch (Exception e) {
-                return "{\"error\": \"" + e.getMessage() + "\"}";
+                String result = "{\"error\": \"" + e.getMessage() + "\"}";
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
+                emitStatus(LLMStatus.error("Tool execution failed: " + toolName, e));
+                return result;
             }
         }, executor);
     }
@@ -608,11 +697,15 @@ public class LLMClient implements AutoCloseable {
         return CompletableFuture.supplyAsync(() -> {
             compactHistoryIfNeeded(Map.of());
             LLMRequest request = buildRequestFromHistory(Map.of());
+            emitStatus(LLMStatus.of(LLMStatus.Type.CONTINUATION_STARTED, "Continuing conversation after tool results"));
+            emitStatus(LLMStatus.of(LLMStatus.Type.REQUEST_SENT, "Continuation request sent to model"));
             LLMResponse response = adapter.chat(request);
+            emitStatus(LLMStatus.of(LLMStatus.Type.RESPONSE_RECEIVED, "Continuation response received"));
             String reply = response.getContentOrEmpty();
             history.addAssistant(reply);
             syncTokenUsage(response);
             compactHistoryIfNeeded(Map.of());
+            emitStatus(LLMStatus.result(LLMStatus.Type.CHAT_COMPLETED, "Chat completed", reply));
             return reply;
         }, executor);
     }
@@ -810,6 +903,23 @@ public class LLMClient implements AutoCloseable {
     }
 
     private int safeLength(String value) { return value != null ? value.length() : 0; }
+
+    private void emitStatus(LLMStatus status) {
+        try {
+            statusListener.accept(status);
+        } catch (Exception e) {
+            logger.warn("Status listener failed: {}", e.getMessage());
+        }
+    }
+
+    private Consumer<LLMStatus> combineStatusListeners(Consumer<LLMStatus> first, Consumer<LLMStatus> second) {
+        Consumer<LLMStatus> safeFirst = first != null ? first : status -> {};
+        Consumer<LLMStatus> safeSecond = second != null ? second : status -> {};
+        return status -> {
+            safeFirst.accept(status);
+            safeSecond.accept(status);
+        };
+    }
 
     // ========== Tool Conversion ==========
     private Tool toolFromInfo(ToolRegistry.ToolInfo info) {
