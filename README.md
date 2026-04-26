@@ -338,6 +338,45 @@ String reply = client.chat("""
     """);
 ```
 
+### Structured Tool Results
+
+Tool outputs are wrapped in a consistent JSON envelope before they are sent back to the model. This helps the model produce clearer user-facing answers and helps apps inspect tool behavior.
+
+Successful tool result:
+
+```json
+{
+  "tool": "city_tip",
+  "ok": true,
+  "status": "success",
+  "arguments": {
+    "city": "Jaipur",
+    "season": "winter"
+  },
+  "result": "Travel tip for Jaipur in winter: start early.",
+  "message": "Tool completed and returned usable data."
+}
+```
+
+If a tool throws an exception, is missing, returns empty text, or returns failure-like text such as `sorry`, `unable`, `not available`, or `error`, the framework marks the result as failed:
+
+```json
+{
+  "tool": "city_tip",
+  "ok": false,
+  "status": "failed",
+  "arguments": {
+    "city": "Jaipur",
+    "season": "winter"
+  },
+  "result": "Sry I'm not able to answer right now!",
+  "message": "Tool returned an unavailable or failure-like response instead of useful data.",
+  "user_message": "The city_tip tool could not return a usable result. Explain this clearly to the user instead of giving a vague answer."
+}
+```
+
+`TOOL_RESPONSE_VALIDATED` status events include this same structured payload.
+
 ### Retry Tool Calls
 
 ```java

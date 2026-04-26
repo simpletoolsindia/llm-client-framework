@@ -139,6 +139,30 @@ class LLMClientTest {
     }
 
     @Test
+    void toolUnavailableTextIsValidatedAsStructuredFailure() {
+        ClientConfig config = ClientConfig.of(Provider.OLLAMA).model("gemma4:latest");
+        LLMClient client = LLMClient.builder()
+            .config(config)
+            .adapter(new ToolCallingAdapter())
+            .build();
+        client.tool("city_tip", "Return a city tip", args -> "Sry I'm not able to answer right now!");
+
+        client.chat("Use city_tip for Jaipur in winter.");
+
+        String toolMessage = client.getHistory().getMessages().stream()
+            .filter(message -> message.role() == Message.Role.tool)
+            .map(Message::content)
+            .findFirst()
+            .orElse("");
+
+        assertTrue(toolMessage.contains("\"tool\":\"city_tip\""));
+        assertTrue(toolMessage.contains("\"ok\":false"));
+        assertTrue(toolMessage.contains("\"status\":\"failed\""));
+        assertTrue(toolMessage.contains("unavailable or failure-like response"));
+        assertTrue(toolMessage.contains("could not return a usable result"));
+    }
+
+    @Test
     void openAICompatibleAdapterDeliversChunksBeforeResponseCompletes() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         CountDownLatch firstChunkSent = new CountDownLatch(1);

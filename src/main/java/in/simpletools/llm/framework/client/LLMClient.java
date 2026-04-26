@@ -673,20 +673,22 @@ public class LLMClient implements AutoCloseable {
 
             if (info == null) {
                 logger.warn("Tool not found: {}", toolName);
-                String result = "{\"error\": \"Tool not found: " + toolName + "\"}";
+                String result = buildToolFailureJson(toolName, args, "Tool not found: " + toolName);
                 emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result));
                 return result;
             }
 
             try {
-                Object result = info.invoke(args);
-                String json = new com.google.gson.Gson().toJson(result);
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_COMPLETED, toolName, args, json));
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, json));
-                return json;
+                Object rawResult = info.invoke(args);
+                String structuredResult = buildToolResultJson(toolName, args, rawResult);
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_COMPLETED, toolName, args, structuredResult));
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, structuredResult));
+                return structuredResult;
             } catch (Exception e) {
-                String result = "{\"error\": \"" + e.getMessage() + "\"}";
+                String result = buildToolFailureJson(toolName, args, e.getMessage());
                 emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
+                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result));
                 emitStatus(LLMStatus.error("Tool execution failed: " + toolName, e));
                 return result;
             }
@@ -920,6 +922,56 @@ public class LLMClient implements AutoCloseable {
             safeSecond.accept(status);
         };
     }
+
+    private String buildToolResultJson(String toolName, Map<String, Object> args, Object rawResult) {
+        ToolValidation validation = validateToolResult(rawResult);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("tool", toolName);
+        payload.put("ok", validation.ok());
+        payload.put("status", validation.ok() ? "success" : "failed");
+        payload.put("arguments", args);
+        payload.put("result", rawResult);
+        payload.put("message", validation.message());
+        if (!validation.ok()) {
+            payload.put("user_message", "The " + toolName + " tool could not return a usable result. Explain this clearly to the user instead of giving a vague answer.");
+        }
+        return new com.google.gson.Gson().toJson(payload);
+    }
+
+    private String buildToolFailureJson(String toolName, Map<String, Object> args, String error) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("tool", toolName);
+        payload.put("ok", false);
+        payload.put("status", "failed");
+        payload.put("arguments", args);
+        payload.put("error", error != null && !error.isBlank() ? error : "Tool execution failed");
+        payload.put("message", "The " + toolName + " tool failed before it could return a usable result.");
+        payload.put("user_message", "Tell the user the " + toolName + " tool failed and include the error in plain language.");
+        return new com.google.gson.Gson().toJson(payload);
+    }
+
+    private ToolValidation validateToolResult(Object rawResult) {
+        if (rawResult == null) {
+            return new ToolValidation(false, "Tool returned null instead of usable data.");
+        }
+        if (rawResult instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.isEmpty()) {
+                return new ToolValidation(false, "Tool returned an empty response.");
+            }
+            String lower = trimmed.toLowerCase(Locale.ROOT);
+            boolean unavailable = List.of(
+                "sry", "sorry", "not able", "unable", "can't", "cannot",
+                "failed", "error", "not available", "no data", "try again later"
+            ).stream().anyMatch(lower::contains);
+            if (unavailable) {
+                return new ToolValidation(false, "Tool returned an unavailable or failure-like response instead of useful data.");
+            }
+        }
+        return new ToolValidation(true, "Tool completed and returned usable data.");
+    }
+
+    private record ToolValidation(boolean ok, String message) {}
 
     // ========== Tool Conversion ==========
     private Tool toolFromInfo(ToolRegistry.ToolInfo info) {
