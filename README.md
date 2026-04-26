@@ -2,15 +2,8 @@
 
 Unified Java 21 client for local and cloud LLM providers with chat, streaming, tool calling, conversation history, context tracking, auto-compaction, and built-in tools.
 
-[![Maven Central](https://img.shields.io/badge/Maven-in.simpletools%3Allm--client--framework-2ea44f)](https://central.sonatype.com/artifact/in.simpletools/llm-client-framework)
 [![Java](https://img.shields.io/badge/Java-21+-1f6feb)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-
-## Current Version
-
-```text
-in.simpletools:llm-client-framework:1.0.7
-```
 
 ## What You Can Build
 
@@ -735,33 +728,6 @@ Verify your instance supports JSON output:
 ```bash
 curl 'https://search.example.com/search?q=java&format=json'
 ```
-
-### Maven cannot find the latest version
-
-Refresh Gradle dependencies:
-
-```bash
-./gradlew --refresh-dependencies build
-```
-
-## Publishing Notes
-
-The package is published under:
-
-```text
-groupId    = in.simpletools
-artifactId = llm-client-framework
-```
-
-Release checklist:
-
-1. Update `version` in `build.gradle`.
-2. Update README dependency examples.
-3. Run `./gradlew clean test javadoc publishToMavenLocal`.
-4. Commit and push.
-5. Run `./gradlew publishToCentral`.
-6. Trigger the OSSRH Central Portal upload for `in.simpletools`.
-7. Verify Maven Central metadata.
 
 ## License
 
