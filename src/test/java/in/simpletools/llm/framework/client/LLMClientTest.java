@@ -11,6 +11,7 @@ import in.simpletools.llm.framework.adapter.OpenAIAdapter;
 import in.simpletools.llm.framework.model.LLMRequest;
 import in.simpletools.llm.framework.model.LLMResponse;
 import in.simpletools.llm.framework.model.Message;
+import in.simpletools.llm.framework.model.ToolCall;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -88,6 +89,27 @@ class LLMClientTest {
             .anyMatch(message -> message.role() == Message.Role.assistant
                 && message.content() != null
                 && message.content().startsWith("Reply: stream this")));
+    }
+
+    @Test
+    void streamChatWithToolsExecutesToolFlowAndPrintsFinalReply() {
+        ClientConfig config = ClientConfig.of(Provider.OLLAMA).model("gemma4:latest");
+        LLMClient client = LLMClient.builder()
+            .config(config)
+            .adapter(new ToolCallingAdapter())
+            .build();
+        client.tool("city_tip", "Return a city tip", args ->
+            "Travel tip for " + args.get("city") + " in " + args.get("season") + ": start early.");
+        List<String> chunks = new ArrayList<>();
+
+        client.streamChat("Use city_tip for Jaipur in winter.", chunks::add);
+
+        assertTrue(chunks.size() == 1);
+        assertTrue(chunks.get(0).contains("Travel tip for Jaipur in winter: start early."));
+        assertTrue(client.getHistory().getMessages().stream()
+            .anyMatch(message -> message.role() == Message.Role.tool
+                && message.content() != null
+                && message.content().contains("Travel tip for Jaipur in winter")));
     }
 
     @Test
@@ -202,6 +224,49 @@ class LLMClientTest {
         @Override
         public void streamChat(LLMRequest request, Consumer<String> onChunk) {
             onChunk.accept(chat(request).getContentOrEmpty());
+        }
+
+        @Override
+        public String generate(String prompt) {
+            return "Generated: " + prompt;
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return true;
+        }
+
+        @Override
+        public Map<String, String> getHeaders() {
+            return Map.of();
+        }
+    }
+
+    private static final class ToolCallingAdapter implements ProviderAdapter {
+        @Override
+        public LLMResponse chat(LLMRequest request) {
+            boolean hasToolResult = request.messages().stream()
+                .anyMatch(message -> message.role() == Message.Role.tool);
+            if (!hasToolResult) {
+                ToolCall call = new ToolCall("call-1", new ToolCall.Function(
+                    "city_tip",
+                    Map.of("city", "Jaipur", "season", "winter")
+                ));
+                Message assistant = new Message(Message.Role.assistant, "").withToolCalls(List.of(call));
+                return new LLMResponse("gemma4:latest", assistant, "tool_calls", null, null, true, null, null, null);
+            }
+
+            String toolResult = request.messages().stream()
+                .filter(message -> message.role() == Message.Role.tool)
+                .map(Message::content)
+                .reduce((first, second) -> second)
+                .orElse("");
+            return new LLMResponse("gemma4:latest", Message.ofAssistant("Answer: " + toolResult), "stop", null, null, true, null, null, null);
+        }
+
+        @Override
+        public void streamChat(LLMRequest request, Consumer<String> onChunk) {
+            throw new AssertionError("tool streaming should use the tool-capable chat flow");
         }
 
         @Override

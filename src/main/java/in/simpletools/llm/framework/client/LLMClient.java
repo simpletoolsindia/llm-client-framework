@@ -358,6 +358,12 @@ public class LLMClient implements AutoCloseable {
      */
     public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError) {
         try {
+            if (!tools.isEmpty()) {
+                String reply = processUserMessage(Message.ofUser(message), Map.of());
+                if (!reply.isEmpty()) onToken.accept(reply);
+                return;
+            }
+
             var response = new StringBuilder();
             ensureContextCapacity(List.of(Message.ofUser(message)), Map.of());
             history.addUser(message);
