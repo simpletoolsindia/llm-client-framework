@@ -6,11 +6,34 @@ import java.lang.reflect.*;
 import java.util.function.Function;
 
 /**
- * Central registry for LLM tools with auto-registration and retry support.
+ * Central registry for LLM-callable tools.
+ *
+ * <p>The registry stores tool metadata used to build provider tool schemas and
+ * the Java handlers invoked when the model requests a tool call. Most
+ * applications interact with this indirectly through
+ * {@link in.simpletools.llm.framework.client.LLMClient#tool(String, String, Function)}
+ * or {@link in.simpletools.llm.framework.client.LLMClient#registerTools(Object)}.</p>
+ *
+ * <p>Tools can be registered in two ways:</p>
+ * <ul>
+ *   <li>Lambda registration with explicit parameter metadata</li>
+ *   <li>Annotation registration from {@link LLMTool}-annotated methods</li>
+ * </ul>
  */
 public class ToolRegistry {
     private final Map<String, ToolInfo> tools = new HashMap<>();
 
+    /**
+     * Runtime metadata and invocation handle for one registered tool.
+     *
+     * @param name tool name exposed to the model
+     * @param description tool description exposed to the model
+     * @param params parameter metadata keyed by parameter name
+     * @param handler lambda handler, when registered programmatically
+     * @param method reflective method, when registered from annotations
+     * @param instance service instance for reflective invocation
+     * @param retryConfig retry behavior for invocation failures
+     */
     public record ToolInfo(
         String name,
         String description,
@@ -20,6 +43,13 @@ public class ToolRegistry {
         Object instance,
         Retry.RetryConfig retryConfig
     ) {
+        /**
+         * Invoke this tool using model-provided arguments.
+         *
+         * @param args decoded argument map
+         * @return tool result object
+         * @throws Exception when invocation fails after retries
+         */
         public Object invoke(Map<String, Object> args) throws Exception {
             if (handler != null) {
                 return Retry.withRetry(() -> handler.apply(args), retryConfig);
@@ -44,7 +74,21 @@ public class ToolRegistry {
         }
     }
 
+    /**
+     * Tool parameter metadata.
+     *
+     * @param name parameter name exposed to the model
+     * @param description human-readable parameter description
+     * @param required whether the model should provide this parameter
+     * @param type Java type used to infer the provider JSON type
+     */
     public record ParamInfo(String name, String description, boolean required, Class<?> type) {
+        /**
+         * Convert a Java type to the JSON schema primitive type used in tool schemas.
+         *
+         * @param t Java type
+         * @return JSON schema type name
+         */
         public static String jsonType(Class<?> t) {
             String cn = t.getName();
             if (cn.equals("java.lang.String") || cn.equals("java.lang.Character")) return "string";
@@ -106,7 +150,14 @@ public class ToolRegistry {
         tools.put(name, new ToolInfo(name, desc, Map.copyOf(params), null, m, service, Retry.RetryConfig.defaults()));
     }
 
-    /** Register a tool using a lambda/Function. */
+    /**
+     * Register a tool using a lambda/function handler.
+     *
+     * @param name tool name exposed to the model
+     * @param description tool description exposed to the model
+     * @param handler handler invoked with decoded arguments
+     * @param params parameter metadata
+     */
     public void register(String name, String description,
                          Function<Map<String, Object>, Object> handler,
                          Map<String, ParamInfo> params) {
@@ -114,7 +165,18 @@ public class ToolRegistry {
             null, null, Retry.RetryConfig.defaults()));
     }
 
-    /** Register a tool with full retry configuration. */
+    /**
+     * Register a tool with explicit retry configuration.
+     *
+     * @param name tool name exposed to the model
+     * @param description tool description exposed to the model
+     * @param handler handler invoked with decoded arguments
+     * @param params parameter metadata
+     * @param maxRetries maximum attempts before surfacing an error
+     * @param retryDelayMs initial retry delay in milliseconds
+     * @param backoffMultiplier exponential backoff multiplier
+     * @param maxRetryDelayMs maximum retry delay in milliseconds
+     */
     public void register(String name, String description,
                          Function<Map<String, Object>, Object> handler,
                          Map<String, ParamInfo> params,
@@ -125,16 +187,27 @@ public class ToolRegistry {
             null, null, retryConfig));
     }
 
-    /** Register a simple tool with no parameters. */
+    /**
+     * Register a no-argument command tool.
+     *
+     * @param name tool name exposed to the model
+     * @param description tool description exposed to the model
+     * @param runnable command to execute
+     */
     public void register(String name, String description, Runnable runnable) {
         tools.put(name, new ToolInfo(name, description, Map.of(), args -> {
             runnable.run(); return "Done";
         }, null, null, Retry.RetryConfig.defaults()));
     }
 
+    /** @param name tool name @return matching tool metadata or null */
     public ToolInfo get(String name) { return tools.get(name); }
+    /** @return registered tool names */
     public Set<String> getToolNames() { return tools.keySet(); }
+    /** @return registered tool metadata */
     public Collection<ToolInfo> getAllTools() { return tools.values(); }
+    /** @return number of registered tools */
     public int getToolCount() { return tools.size(); }
+    /** Remove all registered tools. */
     public void clear() { tools.clear(); }
 }

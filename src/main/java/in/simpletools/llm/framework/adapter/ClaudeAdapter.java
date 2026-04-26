@@ -9,6 +9,13 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+/**
+ * Adapter for Anthropic Claude Messages API.
+ *
+ * <p>The adapter converts framework messages into Claude's message format,
+ * handles tool-use content blocks, and parses Claude responses back into
+ * provider-neutral {@link LLMResponse} objects.</p>
+ */
 public class ClaudeAdapter implements ProviderAdapter {
     private final String apiKey;
     private final String model;
@@ -16,6 +23,13 @@ public class ClaudeAdapter implements ProviderAdapter {
     private final HttpClient httpClient;
     private final Gson gson = new Gson();
 
+    /**
+     * Create a Claude adapter.
+     *
+     * @param baseUrl Anthropic API base URL
+     * @param model Claude model name
+     * @param apiKey Anthropic API key
+     */
     public ClaudeAdapter(String baseUrl, String model, String apiKey) {
         this.baseUrl = baseUrl;
         this.model = model;

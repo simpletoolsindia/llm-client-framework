@@ -10,11 +10,23 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+/**
+ * Adapter for OpenAI-compatible chat completion APIs.
+ *
+ * <p>This adapter is used for OpenAI and many compatible providers. It sends
+ * requests to {@code {baseUrl}/chat/completions}, uses bearer-token
+ * authorization, and parses OpenAI-style responses.</p>
+ */
 public class OpenAIAdapter implements ProviderAdapter {
     protected final ClientConfig config;
     protected final HttpClient httpClient;
     protected final Gson gson = new Gson();
 
+    /**
+     * Create an adapter from a full client config.
+     *
+     * @param config provider config containing base URL, model, and API key
+     */
     public OpenAIAdapter(ClientConfig config) {
         this.config = config;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();

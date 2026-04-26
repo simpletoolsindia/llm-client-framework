@@ -49,13 +49,25 @@ public class HttpTools {
     private static final int DEFAULT_READ_TIMEOUT_MS = 60_000;     // 60 seconds
 
     // ===== Response format =====
-    /** JSON-friendly response wrapper. */
+    /**
+     * JSON-friendly response wrapper returned by built-in HTTP tools.
+     *
+     * @param status HTTP status code
+     * @param body response body as text
+     * @param contentType response content type header
+     * @param responseTimeMs elapsed request time in milliseconds
+     */
     public record HttpResponse(
         int status,
         String body,
         String contentType,
         long responseTimeMs
     ) {
+        /**
+         * Build a compact summary for logs or UI previews.
+         *
+         * @return compact summary for logs or UI previews
+         */
         public String summary() {
             String preview = body != null && body.length() > 200
                 ? body.substring(0, 200) + "..."
@@ -239,6 +251,11 @@ public class HttpTools {
     /**
      * Register all HTTP tools to a ToolRegistry.
      * Adds: http_get, http_post, http_put, http_patch, http_delete
+     */
+    /**
+     * Register all built-in HTTP tools with a registry.
+     *
+     * @param reg target registry
      */
     public static void registerAll(ToolRegistry reg) {
         reg.registerAll(new HttpTools());

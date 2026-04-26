@@ -17,9 +17,9 @@ import java.lang.annotation.*;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ToolDependencies {
-    /** Tool names that must complete before this tool runs. */
+    /** @return tool names that must complete before this tool runs */
     String[] dependsOn() default {};
 
-    /** Whether to fail if any dependency fails. Default true. */
+    /** @return whether to fail this tool when any dependency fails */
     boolean failOnError() default true;
 }

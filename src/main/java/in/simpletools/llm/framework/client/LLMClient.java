@@ -45,6 +45,12 @@ public class LLMClient implements AutoCloseable {
         """;
 
     // ========== Builder ==========
+    /**
+     * Builder for advanced client construction.
+     *
+     * <p>Use the builder when you need a custom history store, custom executor,
+     * mock adapter for tests, custom logger, or prebuilt tool schema list.</p>
+     */
     public static class Builder {
         private ClientConfig config;
         private ConversationHistory history = new ConversationHistory();
@@ -56,23 +62,35 @@ public class LLMClient implements AutoCloseable {
         private TokenTracker tokenTracker;
         private SimpleLogger logger = SimpleLogger.get("LLMClient");
 
+        /** @param config provider/model/API configuration @return this builder */
         public Builder config(ClientConfig config) { this.config = config; return this; }
+        /** @param h in-memory conversation history @return this builder */
         public Builder history(ConversationHistory h) { this.history = h; return this; }
+        /** @param h pluggable conversation history store @return this builder */
         public Builder history(ConversationHistoryStore h) { this.history = new RedisHistoryAdapter(h); return this; }
+        /** @param t prebuilt provider-neutral tool schemas @return this builder */
         public Builder tools(List<Tool> t) { this.tools = new ArrayList<>(t); return this; }
+        /** @param r retry configuration for registered tools @return this builder */
         public Builder retry(Retry.RetryConfig r) { this.retryConfig = r; return this; }
+        /** @param e executor used for async chat and tool execution @return this builder */
         public Builder executor(ExecutorService e) { this.executor = e; return this; }
+        /** @param a custom provider adapter, useful for tests or custom gateways @return this builder */
         public Builder adapter(ProviderAdapter a) { this.adapter = a; return this; }
+        /** @param t token tracker to use @return this builder */
         public Builder tokenTracker(TokenTracker t) { this.tokenTracker = t; return this; }
+        /** @param l logger to use @return this builder */
         public Builder logger(SimpleLogger l) { this.logger = l; return this; }
+        /** @param level logger level @return this builder */
         public Builder loggerLevel(SimpleLogger.Level level) { this.logger.setLevel(level); return this; }
 
+        /** @return configured client */
         public LLMClient build() {
             var resolvedAdapter = adapter != null ? adapter : config != null ? createAdapter(config) : null;
             return new LLMClient(resolvedAdapter, config, history, toolRegistry, tools, retryConfig, executor, logger, tokenTracker);
         }
     }
 
+    /** @return builder for advanced client construction */
     public static Builder builder() { return new Builder(); }
 
     // ========== Private Constructor ==========
@@ -279,27 +297,65 @@ public class LLMClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Send a fully constructed message.
+     *
+     * @param message user, system, assistant, or tool message to append
+     * @return assistant reply, or an {@code Error:} string
+     */
     public String chat(Message message) {
         try { return chatAsync(message).get(5, TimeUnit.MINUTES); }
         catch (Exception e) { return "Error: " + e.getMessage(); }
     }
 
     // ========== Async Chat ==========
+    /**
+     * Send a user message asynchronously.
+     *
+     * @param message user prompt
+     * @return future resolving to assistant reply
+     */
     public CompletableFuture<String> chatAsync(String message) { return chatAsync(message, Map.of()); }
 
+    /**
+     * Send a user message asynchronously with per-request options.
+     *
+     * @param message user prompt
+     * @param options per-request options such as {@code system} and {@code temperature}
+     * @return future resolving to assistant reply
+     */
     public CompletableFuture<String> chatAsync(String message, Map<String, String> options) {
         return CompletableFuture.supplyAsync(() -> processUserMessage(Message.ofUser(message), options), executor);
     }
 
+    /**
+     * Send a fully constructed message asynchronously.
+     *
+     * @param message message to append and process
+     * @return future resolving to assistant reply
+     */
     public CompletableFuture<String> chatAsync(Message message) {
         return CompletableFuture.supplyAsync(() -> processUserMessage(message, Map.of()), executor);
     }
 
     // ========== Streaming Chat ==========
+    /**
+     * Stream a chat reply token/chunk by token/chunk.
+     *
+     * @param message user prompt
+     * @param onToken callback invoked for each text chunk
+     */
     public void streamChat(String message, Consumer<String> onToken) {
         streamChat(message, onToken, e -> logger.error("Stream error: {}", e));
     }
 
+    /**
+     * Stream a chat reply with explicit error handling.
+     *
+     * @param message user prompt
+     * @param onToken callback invoked for each text chunk
+     * @param onError callback invoked with an error message if streaming fails
+     */
     public void streamChat(String message, Consumer<String> onToken, Consumer<String> onError) {
         CompletableFuture.runAsync(() -> {
             try {
@@ -322,19 +378,31 @@ public class LLMClient implements AutoCloseable {
     }
 
     // ========== History Management ==========
+    /** @return current conversation history object */
     public ConversationHistory getHistory() { return history; }
+    /** @return this client after clearing conversation history and token counters */
     public LLMClient clearHistory() {
         history.clear();
         tokenTracker.reset();
         compactedContextSummary = null;
         return this;
     }
+    /** @param n number of latest messages to remove @return this client */
     public LLMClient clearLastN(int n) { history.clearLastN(n); return this; }
 
+    /** @param conversationId Redis conversation key/id @return this client */
     public LLMClient withRedisHistory(String conversationId) {
         return withRedisHistory(conversationId, "localhost", 6379);
     }
 
+    /**
+     * Use Redis-backed history when Redis is available, otherwise fallback to in-memory history.
+     *
+     * @param conversationId Redis conversation key/id
+     * @param host Redis host
+     * @param port Redis port
+     * @return this client
+     */
     public LLMClient withRedisHistory(String conversationId, String host, int port) {
         try {
             RedisHistory redis = RedisHistory.withJedis(host, port, conversationId);
@@ -353,6 +421,7 @@ public class LLMClient implements AutoCloseable {
         return this;
     }
 
+    /** @return this client after switching back to fresh in-memory history */
     public LLMClient withMemoryHistory() {
         this.history = new ConversationHistory();
         this.compactedContextSummary = null;
@@ -361,37 +430,53 @@ public class LLMClient implements AutoCloseable {
     }
 
     // ========== Token Tracking ==========
+    /** @return current context-window usage summary */
     public TokenTracker.ContextInfo getContextInfo() { return tokenTracker.getContextInfo(); }
 
+    /**
+     * Estimate context-window usage after adding a hypothetical next user message.
+     *
+     * @param nextUserMessage message to project
+     * @return projected context usage summary
+     */
     public TokenTracker.ContextInfo getProjectedContextInfo(String nextUserMessage) {
         var projected = new ArrayList<>(history.getMessages());
         projected.add(Message.ofUser(nextUserMessage));
         return estimateContextInfo(projected);
     }
 
+    /** @return mutable token tracker used by this client */
     public TokenTracker getTokenTracker() { return tokenTracker; }
+    /** @return last generated compacted context summary, or null */
     public String getCompactedContextSummary() { return compactedContextSummary; }
+    /** Print current context-window usage to standard output. */
     public void printContextInfo() {
         System.out.println(TokenTracker.formatContextInfo(tokenTracker.getContextInfo()));
     }
 
     // ========== Configuration Methods ==========
+    /** @param tools replacement tool schema list @return this client */
     public LLMClient withTools(List<Tool> tools) {
         this.tools.clear(); this.tools.addAll(tools); return this;
     }
+    /** @param config retry configuration for future tool registrations @return this client */
     public LLMClient withRetry(Retry.RetryConfig config) {
         this.retryConfig = config; return this;
     }
+    /** @param maxAttempts maximum retry attempts for future tool registrations @return this client */
     public LLMClient withRetry(int maxAttempts) {
         return withRetry(new Retry.RetryConfig(maxAttempts, 500, 2.0, 10_000));
     }
+    /** @return this client with automatic history compaction enabled */
     public LLMClient withAutoCompaction() { this.autoCompactEnabled = true; return this; }
+    /** @param triggerPercent usage percent that triggers compaction @param targetPercent post-compaction target percent @return this client */
     public LLMClient withAutoCompaction(double triggerPercent, double targetPercent) {
         this.autoCompactEnabled = true;
         this.autoCompactTriggerPercent = triggerPercent;
         this.autoCompactTargetPercent = targetPercent;
         return this;
     }
+    /** @param triggerPercent usage percent that triggers compaction @param targetPercent post-compaction target percent @param keepLastMessages recent messages to keep verbatim @return this client */
     public LLMClient withAutoCompaction(double triggerPercent, double targetPercent, int keepLastMessages) {
         this.autoCompactEnabled = true;
         this.autoCompactTriggerPercent = triggerPercent;
@@ -399,26 +484,34 @@ public class LLMClient implements AutoCloseable {
         this.compactKeepLastMessages = keepLastMessages;
         return this;
     }
+    /** @return this client with automatic compaction disabled */
     public LLMClient withoutAutoCompaction() { this.autoCompactEnabled = false; return this; }
+    /** @param contextWindowTokens manual context window size @return this client */
     public LLMClient withContextWindow(long contextWindowTokens) {
         tokenTracker.setModel(config.model(), contextWindowTokens);
         manualContextWindowConfigured = true;
         return this;
     }
+    /** @return this client with verbose debug logging enabled */
     public LLMClient withVerboseLogging() {
         logger.setVerbose(true);
         logger.setLevel(SimpleLogger.Level.DEBUG);
         return this;
     }
+    /** @param level log level to use while verbose logging is enabled @return this client */
     public LLMClient withVerboseLogging(SimpleLogger.Level level) {
         logger.setVerbose(true);
         logger.setLevel(level);
         return this;
     }
+    /** @return this client with verbose logging disabled */
     public LLMClient withoutVerboseLogging() { logger.setVerbose(false); return this; }
+    /** @param level logger level @return this client */
     public LLMClient setLogLevel(SimpleLogger.Level level) { logger.setLevel(level); return this; }
+    /** @return logger used by this client */
     public SimpleLogger getLogger() { return logger; }
 
+    /** Shut down the client's executor. Use after finishing with long-lived clients. */
     @Override
     public void close() {
         executor.shutdown();
@@ -725,19 +818,37 @@ public class LLMClient implements AutoCloseable {
     }
 
     // ========== Static Factory Methods ==========
+    /**
+     * Create a client from a full config.
+     *
+     * @param config provider, model, key, timeout, and sampling config
+     * @return configured client
+     */
     public static LLMClient create(ClientConfig config) { return builder().config(config).build(); }
 
+    /** @param model Ollama model name @return configured Ollama client */
     public static LLMClient ollama(String model) { return create(ClientConfig.of(Provider.OLLAMA).model(model)); }
+    /** @param baseUrl Ollama base URL @param model Ollama model name @return configured Ollama client */
     public static LLMClient ollama(String baseUrl, String model) { return create(ClientConfig.of(Provider.OLLAMA).baseUrl(baseUrl).model(model)); }
+    /** @param model OpenAI model name @param apiKey OpenAI API key @return configured OpenAI client */
     public static LLMClient openAI(String model, String apiKey) { return create(ClientConfig.of(Provider.OPENAI).model(model).apiKey(apiKey)); }
+    /** @param model DeepSeek model name @param apiKey DeepSeek API key @return configured DeepSeek client */
     public static LLMClient deepSeek(String model, String apiKey) { return create(ClientConfig.of(Provider.DEEPSEEK).model(model).apiKey(apiKey)); }
+    /** @param model Claude model name @param apiKey Anthropic API key @return configured Claude client */
     public static LLMClient claude(String model, String apiKey) { return create(ClientConfig.of(Provider.ANTHROPIC).model(model).apiKey(apiKey)); }
+    /** @param model NVIDIA model name @param apiKey NVIDIA API key @return configured NVIDIA client */
     public static LLMClient nvidia(String model, String apiKey) { return create(ClientConfig.of(Provider.NVIDIA).model(model).apiKey(apiKey)); }
+    /** @param model OpenRouter model name @param apiKey OpenRouter API key @return configured OpenRouter client */
     public static LLMClient openRouter(String model, String apiKey) { return create(ClientConfig.of(Provider.OPENROUTER).model(model).apiKey(apiKey)); }
+    /** @param model LM Studio model name @return configured LM Studio client */
     public static LLMClient lmStudio(String model) { return create(ClientConfig.of(Provider.LM_STUDIO).model(model)); }
+    /** @param model vLLM model name @return configured vLLM client */
     public static LLMClient vllm(String model) { return create(ClientConfig.of(Provider.VLLM).model(model)); }
+    /** @param model Jan model name @return configured Jan client */
     public static LLMClient jan(String model) { return create(ClientConfig.of(Provider.JAN).model(model)); }
+    /** @param model Groq model name @param apiKey Groq API key @return configured Groq client */
     public static LLMClient groq(String model, String apiKey) { return create(ClientConfig.of(Provider.GROQ).model(model).apiKey(apiKey)); }
+    /** @param model Mistral model name @param apiKey Mistral API key @return configured Mistral client */
     public static LLMClient mistral(String model, String apiKey) { return create(ClientConfig.of(Provider.MISTRAL).model(model).apiKey(apiKey)); }
 
     private static ProviderAdapter createAdapter(ClientConfig config) {

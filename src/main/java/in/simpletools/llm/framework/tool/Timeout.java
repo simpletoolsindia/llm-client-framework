@@ -17,6 +17,6 @@ import java.lang.annotation.*;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Timeout {
-    /** Timeout in milliseconds. Default 30 seconds. */
+    /** @return timeout in milliseconds */
     long millis() default 30_000;
 }

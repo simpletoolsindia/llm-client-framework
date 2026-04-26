@@ -20,15 +20,31 @@ import java.lang.annotation.*;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Cached {
-    /** Cache TTL in seconds. Default 5 minutes. */
+    /**
+     * Cache time-to-live.
+     *
+     * @return cache TTL in seconds
+     */
     int ttlSeconds() default 300;
 
-    /** Key prefix for cache entries. Defaults to tool name. */
+    /**
+     * Prefix used for generated cache keys.
+     *
+     * @return key prefix for cache entries; empty means use the tool name
+     */
     String keyPrefix() default "";
 
-    /** Whether to cache null results. Default false. */
+    /**
+     * Decide whether null tool results should be stored.
+     *
+     * @return whether null results should be cached
+     */
     boolean cacheNull() default false;
 
-    /** Maximum cached entries per tool. Default 1000. */
+    /**
+     * Maximum cached entries allowed for one tool.
+     *
+     * @return maximum cached entries per tool
+     */
     int maxEntries() default 1000;
 }

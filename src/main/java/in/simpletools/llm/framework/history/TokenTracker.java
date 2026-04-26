@@ -5,7 +5,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Tracks token usage and context window for the current conversation.
+ * Tracks token usage and context-window pressure for a conversation.
+ *
+ * <p>The tracker combines exact provider usage when available with lightweight
+ * local estimates when usage is missing. The client uses this information to
+ * decide when conversation history should be compacted.</p>
  */
 public class TokenTracker {
     private int promptTokens;
@@ -16,8 +20,28 @@ public class TokenTracker {
     private int messageCount;
     private final List<TokenSnapshot> history;
 
+    /**
+     * Point-in-time token counters recorded after updates.
+     *
+     * @param promptTokens prompt/input token count
+     * @param completionTokens completion/output token count
+     * @param totalTokens total token count
+     * @param role update source label
+     */
     public record TokenSnapshot(int promptTokens, int completionTokens, int totalTokens, String role) {}
 
+    /**
+     * Current context-window usage summary.
+     *
+     * @param model model name
+     * @param totalLimit known or estimated context window
+     * @param usedTokens current used token count
+     * @param remainingTokens estimated remaining tokens
+     * @param promptTokens prompt/input tokens
+     * @param completionTokens completion/output tokens
+     * @param usagePercent percentage of context window used
+     * @param messageCount number of messages represented
+     */
     public record ContextInfo(
         String model,
         long totalLimit,
@@ -28,20 +52,29 @@ public class TokenTracker {
         double usagePercent,
         int messageCount
     ) {
+        /** @return compact human-readable summary */
         public String summary() {
             return String.format("[%s] %d / %d tokens (%.1f%%) | prompt=%d, completion=%d | %d messages",
                 model, usedTokens, totalLimit, usagePercent, promptTokens, completionTokens, messageCount);
         }
     }
 
+    /** Create an empty token tracker with model limit auto-detection. */
     public TokenTracker() { this.history = new ArrayList<>(); }
 
+    /**
+     * Create a tracker for a known model/context window.
+     *
+     * @param model model name
+     * @param modelLimit context window token limit
+     */
     public TokenTracker(String model, long modelLimit) {
         this();
         this.model = model;
         this.modelLimit = modelLimit;
     }
 
+    /** @param model model name @param limit context window token limit */
     public void setModel(String model, long limit) {
         this.model = model;
         this.modelLimit = limit;
@@ -51,8 +84,10 @@ public class TokenTracker {
 
     // ===== Token Estimation =====
 
+    /** @param response provider response containing usage data */
     public void updateFromUsage(LLMResponse response) { updateFromUsage(response, messageCount); }
 
+    /** @param response provider response @param currentMessageCount current history size */
     public void updateFromUsage(LLMResponse response, int currentMessageCount) {
         if (response == null || response.usage() == null) {
             this.messageCount = currentMessageCount;
@@ -96,6 +131,7 @@ public class TokenTracker {
         return total + 4; // role overhead
     }
 
+    /** @param text text to estimate @return approximate token count */
     public int estimateTextTokens(String text) {
         if (text == null || text.isEmpty()) return 0;
         return (text.length() / 4) + 1;
@@ -109,6 +145,7 @@ public class TokenTracker {
         recordSnapshot("update");
     }
 
+    /** @param messages current conversation messages to estimate from */
     public void syncWithConversation(List<Message> messages) {
         this.promptTokens = estimateTokens(messages);
         this.completionTokens = 0;
@@ -117,6 +154,7 @@ public class TokenTracker {
         recordSnapshot("sync");
     }
 
+    /** @return current context usage summary */
     public ContextInfo getContextInfo() {
         long limit = resolveModelLimit();
         int used = totalTokens > 0 ? totalTokens : (promptTokens + completionTokens);

@@ -9,12 +9,25 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+/**
+ * Provider adapter for Ollama's native {@code /api/chat} and {@code /api/generate} endpoints.
+ *
+ * <p>This adapter is selected by {@link in.simpletools.llm.framework.client.LLMClient}
+ * when the provider is {@code OLLAMA}. It supports chat messages, tool schemas,
+ * streaming chunks, and simple prompt generation.</p>
+ */
 public class OllamaAdapter implements ProviderAdapter {
     private final String baseUrl;
     private final String model;
     private final HttpClient httpClient;
     private final Gson gson = new Gson();
 
+    /**
+     * Create an Ollama adapter.
+     *
+     * @param baseUrl Ollama server base URL, usually {@code http://localhost:11434}
+     * @param model model name, for example {@code gemma4:latest}
+     */
     public OllamaAdapter(String baseUrl, String model) {
         this.baseUrl = baseUrl;
         this.model = model;

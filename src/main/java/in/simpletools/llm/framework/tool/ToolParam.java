@@ -18,12 +18,12 @@ import java.lang.annotation.*;
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ToolParam {
-    /** Parameter name exposed to the LLM. Defaults to the Java parameter name. */
+    /** @return parameter name exposed to the LLM; defaults to the Java parameter name */
     String name() default "";
 
-    /** Human-readable description of the parameter. */
+    /** @return human-readable description of the parameter */
     String description() default "";
 
-    /** Whether this parameter is required. Default true. */
+    /** @return whether this parameter is required */
     boolean required() default true;
 }
