@@ -17,7 +17,7 @@ import java.util.stream.IntStream;
 /**
  * High-performance functional LLM Client with async support, tool execution, and token tracking.
  */
-public class LLMClient {
+public class LLMClient implements AutoCloseable {
     private final ProviderAdapter adapter;
     private final ClientConfig config;
     private final SimpleLogger logger;
@@ -316,6 +316,11 @@ public class LLMClient {
     public LLMClient setLogLevel(SimpleLogger.Level level) { logger.setLevel(level); return this; }
     public SimpleLogger getLogger() { return logger; }
 
+    @Override
+    public void close() {
+        executor.shutdown();
+    }
+
     // ========== Core Processing ==========
     private String processUserMessage(Message message, Map<String, String> options) {
         ensureContextCapacity(List.of(message), options);
@@ -342,6 +347,8 @@ public class LLMClient {
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
+            history.add(response.message());
+            syncTokenUsage(response);
             return handleToolCallsAsync(response.getToolCalls()).join();
         }
         String reply = response.getContentOrEmpty();

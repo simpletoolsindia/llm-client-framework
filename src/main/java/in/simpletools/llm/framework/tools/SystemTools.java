@@ -531,14 +531,19 @@ public class SystemTools {
         try {
             int maxResults = (limit != null && limit > 0) ? Math.min(limit, 20) : 10;
 
-            // Build DuckDuckGo HTML search URL
-            String searchUrl = "https://html.duckduckgo.com/html/?q="
-                    + URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String searchUrl = System.getProperty(
+                    "simpletools.webSearchUrlTemplate",
+                    "https://html.duckduckgo.com/html/?q=%s"
+            ).formatted(encodedQuery);
 
-            // Fetch search results page
-            String html = fetchWebpage(searchUrl, 30000);
+            // Fetch the raw search results page so the parser can inspect result links.
+            String html = fetchRaw(searchUrl);
             if (html.startsWith("Error:")) {
                 return "Error performing web search: could not fetch search page. " + html;
+            }
+            if (html.contains("anomaly-modal") || html.contains("Unfortunately, bots use DuckDuckGo too")) {
+                return "Error performing web search: search provider blocked automated requests.";
             }
 
             StringBuilder sb = new StringBuilder();
@@ -596,6 +601,38 @@ public class SystemTools {
             return sb.toString().trim();
         } catch (Exception e) {
             return "Error performing web search for '" + query + "': " + e.getMessage();
+        }
+    }
+
+    private static String fetchRaw(String url) {
+        HttpURLConnection conn = null;
+        try {
+            URL target = URI.create(url).toURL();
+            conn = (HttpURLConnection) target.openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; LLM-Tools/1.0)");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+
+            int httpCode = conn.getResponseCode();
+            if (httpCode != 200) {
+                return "Error: HTTP " + httpCode + " for URL: " + url;
+            }
+
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    body.append(line).append("\n");
+                }
+            }
+            return body.toString();
+        } catch (Exception e) {
+            return "Error fetching webpage '" + url + "': " + e.getMessage();
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
