@@ -2,6 +2,7 @@
 
 Unified Java 21 client for local and cloud LLM providers with chat, streaming, tool calling, conversation history, context tracking, auto-compaction, and built-in tools.
 
+[![Maven Central](https://img.shields.io/badge/Maven%20Central-in.simpletools%3Allm--client--framework-2ea44f)](https://central.sonatype.com/artifact/in.simpletools/llm-client-framework)
 [![Java](https://img.shields.io/badge/Java-21+-1f6feb)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
@@ -44,7 +45,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'in.simpletools:llm-client-framework:1.0.9'
+    implementation 'in.simpletools:llm-client-framework:1.1.0'
 }
 ```
 
@@ -54,9 +55,11 @@ dependencies {
 <dependency>
     <groupId>in.simpletools</groupId>
     <artifactId>llm-client-framework</artifactId>
-    <version>1.0.9</version>
+    <version>1.1.0</version>
 </dependency>
 ```
+
+Maven package page: [in.simpletools:llm-client-framework](https://central.sonatype.com/artifact/in.simpletools/llm-client-framework)
 
 ## Quick Start With Ollama
 
@@ -239,7 +242,7 @@ Per streaming call:
 client.streamChatWithStatus(
     "Use city_tip for Jaipur in winter.",
     System.out::print,
-    status -> System.err.println(status.type() + " " + status.toolName())
+    status -> System.err.println(status.message())
 );
 ```
 
@@ -261,10 +264,10 @@ The demo registers a `get_weather` tool, calls Open-Meteo for real weather data,
 
 ```text
 [ 120 ms] thinking
-[1020 ms] tool requested: get_weather {city=Jaipur}
-[1025 ms] running tool: get_weather
-[1850 ms] tool result validated: get_weather
-[1860 ms] continuing with tool result
+[1020 ms] LLM requested tool: get_weather {city=Jaipur}
+[1025 ms] Getting live weather: Jaipur
+[1850 ms] Validated tool response: get_weather
+[1860 ms] Added tool result to conversation: get_weather
 ```
 
 Status types include:
@@ -816,7 +819,7 @@ curl http://localhost:11434/api/tags
 
 Check that:
 
-- you are using `1.0.9` or newer
+- you are using `1.1.0` or newer
 - the model/provider supports streaming
 - your program does not exit before `streamChat(...)` returns
 - your callback flushes output if needed

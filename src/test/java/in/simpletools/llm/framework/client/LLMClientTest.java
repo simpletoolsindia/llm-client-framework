@@ -139,6 +139,24 @@ class LLMClientTest {
     }
 
     @Test
+    void statusMessagesDescribeFileToolActions() {
+        ClientConfig config = ClientConfig.of(Provider.OLLAMA).model("gemma4:latest");
+        LLMClient client = LLMClient.builder()
+            .config(config)
+            .adapter(new NamedToolCallingAdapter("read_file", Map.of("path", "/tmp/demo.txt")))
+            .build();
+        client.tool("read_file", "Read a file", args -> "demo file content");
+        List<String> messages = new ArrayList<>();
+
+        client.onStatus(status -> messages.add(status.message()))
+            .chat("Read /tmp/demo.txt");
+
+        assertTrue(messages.stream().anyMatch(message -> message.contains("LLM requested tool: read_file")));
+        assertTrue(messages.stream().anyMatch(message -> message.contains("Reading file: /tmp/demo.txt")));
+        assertTrue(messages.stream().anyMatch(message -> message.contains("Validated tool response: read_file")));
+    }
+
+    @Test
     void toolUnavailableTextIsValidatedAsStructuredFailure() {
         ClientConfig config = ClientConfig.of(Provider.OLLAMA).model("gemma4:latest");
         LLMClient client = LLMClient.builder()
@@ -302,6 +320,54 @@ class LLMClientTest {
                     "city_tip",
                     Map.of("city", "Jaipur", "season", "winter")
                 ));
+                Message assistant = new Message(Message.Role.assistant, "").withToolCalls(List.of(call));
+                return new LLMResponse("gemma4:latest", assistant, "tool_calls", null, null, true, null, null, null);
+            }
+
+            String toolResult = request.messages().stream()
+                .filter(message -> message.role() == Message.Role.tool)
+                .map(Message::content)
+                .reduce((first, second) -> second)
+                .orElse("");
+            return new LLMResponse("gemma4:latest", Message.ofAssistant("Answer: " + toolResult), "stop", null, null, true, null, null, null);
+        }
+
+        @Override
+        public void streamChat(LLMRequest request, Consumer<String> onChunk) {
+            throw new AssertionError("tool streaming should use the tool-capable chat flow");
+        }
+
+        @Override
+        public String generate(String prompt) {
+            return "Generated: " + prompt;
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return true;
+        }
+
+        @Override
+        public Map<String, String> getHeaders() {
+            return Map.of();
+        }
+    }
+
+    private static final class NamedToolCallingAdapter implements ProviderAdapter {
+        private final String toolName;
+        private final Map<String, Object> args;
+
+        private NamedToolCallingAdapter(String toolName, Map<String, Object> args) {
+            this.toolName = toolName;
+            this.args = args;
+        }
+
+        @Override
+        public LLMResponse chat(LLMRequest request) {
+            boolean hasToolResult = request.messages().stream()
+                .anyMatch(message -> message.role() == Message.Role.tool);
+            if (!hasToolResult) {
+                ToolCall call = new ToolCall("call-1", new ToolCall.Function(toolName, args));
                 Message assistant = new Message(Message.Role.assistant, "").withToolCalls(List.of(call));
                 return new LLMResponse("gemma4:latest", assistant, "tool_calls", null, null, true, null, null, null);
             }

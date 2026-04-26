@@ -73,9 +73,19 @@ public record LLMStatus(
         return new LLMStatus(type, toolName, toolName, arguments, null, null, System.currentTimeMillis());
     }
 
+    /** @param type event type @param message human-readable tool status @param toolName tool name @param arguments tool arguments @return tool status event */
+    public static LLMStatus tool(Type type, String message, String toolName, Map<String, Object> arguments) {
+        return new LLMStatus(type, message, toolName, arguments, null, null, System.currentTimeMillis());
+    }
+
     /** @param type event type @param toolName tool name @param arguments tool arguments @param result result text @return tool status event */
     public static LLMStatus toolResult(Type type, String toolName, Map<String, Object> arguments, String result) {
         return new LLMStatus(type, toolName, toolName, arguments, result, null, System.currentTimeMillis());
+    }
+
+    /** @param type event type @param message human-readable tool status @param toolName tool name @param arguments tool arguments @param result result text @return tool status event */
+    public static LLMStatus toolResult(Type type, String message, String toolName, Map<String, Object> arguments, String result) {
+        return new LLMStatus(type, message, toolName, arguments, result, null, System.currentTimeMillis());
     }
 
     /** @param type event type @param message human-readable message @param result streamed chunk or result @return status event */

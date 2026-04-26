@@ -617,10 +617,11 @@ public class LLMClient implements AutoCloseable {
 
         if (response.hasToolCalls()) {
             logger.debug("Handling {} tool calls", response.getToolCalls().size());
-            response.getToolCalls().forEach(call -> emitStatus(LLMStatus.tool(
+            response.getToolCalls().forEach(call -> emitToolStatus(
                 LLMStatus.Type.TOOL_CALL_REQUESTED,
                 call.function() != null ? call.function().name() : "unknown",
-                call.function() != null ? call.function().arguments() : Map.of())));
+                call.function() != null ? call.function().arguments() : Map.of(),
+                null));
             history.add(response.message());
             syncTokenUsage(response);
             return handleToolCallsAsync(response.getToolCalls()).join();
@@ -653,11 +654,11 @@ public class LLMClient implements AutoCloseable {
                     Message toolMsg = Message.ofTool(results.get(i));
                     toolMsg = toolMsg.withName(call.function() != null ? call.function().name() : null);
                     history.add(toolMsg);
-                    emitStatus(LLMStatus.toolResult(
+                    emitToolStatus(
                         LLMStatus.Type.TOOL_RESPONSE_APPENDED,
                         call.function() != null ? call.function().name() : "unknown",
                         call.function() != null ? call.function().arguments() : Map.of(),
-                        results.get(i)));
+                        results.get(i));
                 });
                 syncTokenUsage(null);
                 return continueConversation();
@@ -669,26 +670,26 @@ public class LLMClient implements AutoCloseable {
             String toolName = call.function().name();
             Map<String, Object> args = call.function().arguments();
             ToolRegistry.ToolInfo info = toolRegistry.get(toolName);
-            emitStatus(LLMStatus.tool(LLMStatus.Type.TOOL_EXECUTION_STARTED, toolName, args));
+            emitToolStatus(LLMStatus.Type.TOOL_EXECUTION_STARTED, toolName, args, null);
 
             if (info == null) {
                 logger.warn("Tool not found: {}", toolName);
                 String result = buildToolFailureJson(toolName, args, "Tool not found: " + toolName);
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result));
+                emitToolStatus(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result);
+                emitToolStatus(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result);
                 return result;
             }
 
             try {
                 Object rawResult = info.invoke(args);
                 String structuredResult = buildToolResultJson(toolName, args, rawResult);
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_COMPLETED, toolName, args, structuredResult));
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, structuredResult));
+                emitToolStatus(LLMStatus.Type.TOOL_EXECUTION_COMPLETED, toolName, args, structuredResult);
+                emitToolStatus(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, structuredResult);
                 return structuredResult;
             } catch (Exception e) {
                 String result = buildToolFailureJson(toolName, args, e.getMessage());
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result));
-                emitStatus(LLMStatus.toolResult(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result));
+                emitToolStatus(LLMStatus.Type.TOOL_EXECUTION_FAILED, toolName, args, result);
+                emitToolStatus(LLMStatus.Type.TOOL_RESPONSE_VALIDATED, toolName, args, result);
                 emitStatus(LLMStatus.error("Tool execution failed: " + toolName, e));
                 return result;
             }
@@ -912,6 +913,74 @@ public class LLMClient implements AutoCloseable {
         } catch (Exception e) {
             logger.warn("Status listener failed: {}", e.getMessage());
         }
+    }
+
+    private void emitToolStatus(LLMStatus.Type type, String toolName, Map<String, Object> args, String result) {
+        String message = toolStatusMessage(type, toolName, args);
+        if (result == null) {
+            emitStatus(LLMStatus.tool(type, message, toolName, args));
+        } else {
+            emitStatus(LLMStatus.toolResult(type, message, toolName, args, result));
+        }
+    }
+
+    private String toolStatusMessage(LLMStatus.Type type, String toolName, Map<String, Object> args) {
+        return switch (type) {
+            case TOOL_CALL_REQUESTED -> "LLM requested tool: " + toolName + formatArgs(args);
+            case TOOL_EXECUTION_STARTED -> toolExecutionMessage(toolName, args);
+            case TOOL_EXECUTION_COMPLETED -> "Tool completed: " + toolName;
+            case TOOL_EXECUTION_FAILED -> "Tool failed: " + toolName;
+            case TOOL_RESPONSE_VALIDATED -> "Validated tool response: " + toolName;
+            case TOOL_RESPONSE_APPENDED -> "Added tool result to conversation: " + toolName;
+            default -> toolName;
+        };
+    }
+
+    private String toolExecutionMessage(String toolName, Map<String, Object> args) {
+        String name = toolName != null ? toolName : "unknown";
+        return switch (name) {
+            case "read_file" -> "Reading file" + valueSuffix(args, "path", "file");
+            case "write_file" -> "Writing file" + valueSuffix(args, "path", "file");
+            case "create_file" -> "Creating file" + valueSuffix(args, "path", "file");
+            case "append_file" -> "Appending file" + valueSuffix(args, "path", "file");
+            case "delete_file" -> "Deleting path" + valueSuffix(args, "path", "file");
+            case "list_dir" -> "Listing directory" + valueSuffix(args, "path", "directory");
+            case "find_files" -> "Finding files" + valueSuffix(args, "pattern", "glob", "path");
+            case "grep" -> "Searching file contents" + valueSuffix(args, "pattern", "query", "path");
+            case "path_exists" -> "Checking path" + valueSuffix(args, "path");
+            case "file_info" -> "Reading file metadata" + valueSuffix(args, "path");
+            case "web_search" -> "Searching web" + valueSuffix(args, "query");
+            case "fetch_webpage" -> "Fetching webpage" + valueSuffix(args, "url");
+            case "run_bash" -> "Running shell command" + valueSuffix(args, "command", "cmd");
+            case "http_get" -> "Calling HTTP GET" + valueSuffix(args, "url");
+            case "http_post" -> "Calling HTTP POST" + valueSuffix(args, "url");
+            case "http_put" -> "Calling HTTP PUT" + valueSuffix(args, "url");
+            case "http_patch" -> "Calling HTTP PATCH" + valueSuffix(args, "url");
+            case "http_delete" -> "Calling HTTP DELETE" + valueSuffix(args, "url");
+            case "get_weather" -> "Getting live weather" + valueSuffix(args, "city", "location");
+            case "calculate" -> "Calculating" + valueSuffix(args, "expression");
+            default -> "Calling tool: " + name + formatArgs(args);
+        };
+    }
+
+    private String valueSuffix(Map<String, Object> args, String... keys) {
+        for (String key : keys) {
+            Object value = args != null ? args.get(key) : null;
+            if (value != null && !value.toString().isBlank()) {
+                return ": " + truncateStatusValue(value.toString());
+            }
+        }
+        return "";
+    }
+
+    private String formatArgs(Map<String, Object> args) {
+        if (args == null || args.isEmpty()) return "";
+        return " " + truncateStatusValue(args.toString());
+    }
+
+    private String truncateStatusValue(String value) {
+        String compact = value.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 120 ? compact : compact.substring(0, 117) + "...";
     }
 
     private Consumer<LLMStatus> combineStatusListeners(Consumer<LLMStatus> first, Consumer<LLMStatus> second) {

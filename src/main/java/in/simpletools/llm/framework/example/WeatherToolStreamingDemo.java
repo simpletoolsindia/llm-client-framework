@@ -57,15 +57,11 @@ public class WeatherToolStreamingDemo {
     private static void printStatus(LLMStatus status, long startedAt) {
         long elapsedMs = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
         switch (status.type()) {
-            case CHAT_STARTED -> System.err.printf("[%4d ms] thinking%n", elapsedMs);
-            case TOOL_CALL_REQUESTED -> System.err.printf("[%4d ms] tool requested: %s %s%n",
-                elapsedMs, status.toolName(), status.arguments());
-            case TOOL_EXECUTION_STARTED -> System.err.printf("[%4d ms] running tool: %s%n",
-                elapsedMs, status.toolName());
-            case TOOL_RESPONSE_VALIDATED -> System.err.printf("[%4d ms] tool result validated: %s%n",
-                elapsedMs, status.toolName());
-            case CONTINUATION_STARTED -> System.err.printf("[%4d ms] continuing with tool result%n", elapsedMs);
-            case CHAT_COMPLETED -> System.err.printf("[%4d ms] completed%n", elapsedMs);
+            case CHAT_STARTED -> System.err.printf("[%4d ms] LLM thinking%n", elapsedMs);
+            case TOOL_CALL_REQUESTED, TOOL_EXECUTION_STARTED, TOOL_RESPONSE_VALIDATED,
+                 TOOL_RESPONSE_APPENDED, CONTINUATION_STARTED ->
+                System.err.printf("[%4d ms] %s%n", elapsedMs, status.message());
+            case CHAT_COMPLETED -> System.err.printf("[%4d ms] Response complete%n", elapsedMs);
             case ERROR, TOOL_EXECUTION_FAILED -> System.err.printf("[%4d ms] error: %s%n",
                 elapsedMs, status.message());
             default -> { }
