@@ -60,16 +60,39 @@ public class SystemTools {
     private static final Gson GSON = new Gson();
     private static volatile WebSearchConfig webSearchConfig = WebSearchConfig.duckDuckGo();
 
+    /**
+     * Built-in backends for the {@link #webSearch(String, Integer)} tool.
+     *
+     * <p>{@link #DUCKDUCKGO} uses DuckDuckGo's HTML results page and needs no
+     * server setup. {@link #SEARXNG} calls a user-provided SearXNG instance via
+     * its JSON endpoint, which is usually better for private/self-hosted use.
+     */
     public enum WebSearchProvider {
         DUCKDUCKGO,
         SEARXNG
     }
 
+    /**
+     * Configuration for the built-in {@code web_search} tool.
+     *
+     * @param provider search backend to use
+     * @param searxngBaseUrl base URL of a SearXNG instance, for example
+     *                       {@code https://search.example.com}; used only with
+     *                       {@link WebSearchProvider#SEARXNG}
+     * @param duckDuckGoUrlTemplate DuckDuckGo-compatible URL template containing
+     *                              one {@code %s} placeholder for the encoded query;
+     *                              used only with {@link WebSearchProvider#DUCKDUCKGO}
+     */
     public record WebSearchConfig(
             WebSearchProvider provider,
             String searxngBaseUrl,
             String duckDuckGoUrlTemplate
     ) {
+        /**
+         * Use DuckDuckGo HTML search with the default URL template.
+         *
+         * @return web search config using {@code https://html.duckduckgo.com/html/?q=%s}
+         */
         public static WebSearchConfig duckDuckGo() {
             return new WebSearchConfig(
                     WebSearchProvider.DUCKDUCKGO,
@@ -78,15 +101,43 @@ public class SystemTools {
             );
         }
 
+        /**
+         * Use a DuckDuckGo-compatible HTML search endpoint.
+         *
+         * <p>The template must contain one {@code %s} placeholder. The framework
+         * replaces it with the URL-encoded query.
+         *
+         * @param urlTemplate URL template, for example
+         *                    {@code https://html.duckduckgo.com/html/?q=%s}
+         * @return web search config using the supplied template
+         */
         public static WebSearchConfig duckDuckGo(String urlTemplate) {
             return new WebSearchConfig(WebSearchProvider.DUCKDUCKGO, null, urlTemplate);
         }
 
+        /**
+         * Use a SearXNG instance for web search.
+         *
+         * <p>The framework calls {@code {baseUrl}/search?q={query}&format=json}.
+         *
+         * @param baseUrl base URL of a SearXNG instance, without a required trailing slash
+         * @return web search config using SearXNG JSON results
+         */
         public static WebSearchConfig searxng(String baseUrl) {
             return new WebSearchConfig(WebSearchProvider.SEARXNG, baseUrl, null);
         }
     }
 
+    /**
+     * Set the global configuration used by the built-in {@code web_search} tool.
+     *
+     * <pre>{@code
+     * SystemTools.configureWebSearch(SystemTools.WebSearchConfig.searxng("https://search.example.com"));
+     * }</pre>
+     *
+     * @param config provider and endpoint configuration to use for future searches
+     * @throws IllegalArgumentException if {@code config} is null
+     */
     public static void configureWebSearch(WebSearchConfig config) {
         if (config == null) {
             throw new IllegalArgumentException("Web search config cannot be null");
@@ -94,14 +145,38 @@ public class SystemTools {
         webSearchConfig = config;
     }
 
+    /**
+     * Use DuckDuckGo HTML search for the built-in {@code web_search} tool.
+     *
+     * <p>This is the default and needs no API key or external service.</p>
+     */
     public static void useDuckDuckGoSearch() {
         configureWebSearch(WebSearchConfig.duckDuckGo());
     }
 
+    /**
+     * Use a custom DuckDuckGo-compatible HTML search URL template.
+     *
+     * <pre>{@code
+     * SystemTools.useDuckDuckGoSearch("https://html.duckduckgo.com/html/?q=%s");
+     * }</pre>
+     *
+     * @param urlTemplate URL template with one {@code %s} placeholder for the encoded query
+     */
     public static void useDuckDuckGoSearch(String urlTemplate) {
         configureWebSearch(WebSearchConfig.duckDuckGo(urlTemplate));
     }
 
+    /**
+     * Use SearXNG for the built-in {@code web_search} tool.
+     *
+     * <pre>{@code
+     * SystemTools.useSearxngSearch("https://search.example.com");
+     * }</pre>
+     *
+     * @param baseUrl base URL of a SearXNG instance; the framework appends
+     *                {@code /search?q=...&format=json}
+     */
     public static void useSearxngSearch(String baseUrl) {
         configureWebSearch(WebSearchConfig.searxng(baseUrl));
     }
@@ -565,11 +640,20 @@ public class SystemTools {
 
     /**
      * Perform a web search and return formatted results with titles, snippets, and URLs.
-     * Uses DuckDuckGo HTML by default, or SearXNG when configured.
+     *
+     * <p>DuckDuckGo is used by default. Call {@link #useSearxngSearch(String)}
+     * before registering or invoking the tool to use a SearXNG instance instead.</p>
+     *
+     * <pre>{@code
+     * String results = SystemTools.webSearch("Java virtual threads guide", 5);
+     *
+     * SystemTools.useSearxngSearch("https://search.example.com");
+     * String privateResults = SystemTools.webSearch("local llm java", 3);
+     * }</pre>
      *
      * @param query search query string
-     * @param limit  maximum number of results to return (default 10, max 20)
-     * @return formatted search results
+     * @param limit maximum number of results to return; null uses 10, maximum is 20
+     * @return formatted search results, no-results message, or an error message string
      */
     @LLMTool(name = "web_search",
             description = "Perform a web search and return formatted results with titles, snippets, " +

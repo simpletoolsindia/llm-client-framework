@@ -92,11 +92,45 @@ public class LLMClient implements AutoCloseable {
 
     // ========== Easy Tool Registration ==========
 
+    /**
+     * Register a function tool that the model can call during chat.
+     *
+     * <pre>{@code
+     * client.tool("weather", "Get weather for a city", args -> {
+     *     String city = args.get("city").toString();
+     *     return "Sunny in " + city;
+     * });
+     * }</pre>
+     *
+     * @param name tool name exposed to the model, for example {@code weather}
+     * @param description clear description of when the model should call this tool
+     * @param handler function that receives model-provided arguments and returns a result
+     * @return this client for fluent chaining
+     */
     public LLMClient tool(String name, String description,
                           Function<Map<String, Object>, Object> handler) {
         return tool(name, description, handler, Map.of());
     }
 
+    /**
+     * Register a function tool with typed parameter metadata for better tool-calling accuracy.
+     *
+     * <pre>{@code
+     * client.tool(
+     *     "calculate",
+     *     "Evaluate a math expression",
+     *     args -> "42",
+     *     Map.of("expression", new ToolRegistry.ParamInfo(
+     *         "expression", "Expression to evaluate", true, String.class))
+     * );
+     * }</pre>
+     *
+     * @param name tool name exposed to the model
+     * @param description clear description of when the model should call this tool
+     * @param handler function that receives model-provided arguments and returns a result
+     * @param params parameter names, descriptions, required flags, and Java types
+     * @return this client for fluent chaining
+     */
     public LLMClient tool(String name, String description,
                           Function<Map<String, Object>, Object> handler,
                           Map<String, ToolRegistry.ParamInfo> params) {
@@ -116,10 +150,35 @@ public class LLMClient implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Register a no-argument command-style tool.
+     *
+     * @param name tool name exposed to the model
+     * @param description clear description of when the model should call this tool
+     * @param runnable command to run when the tool is called
+     * @return this client for fluent chaining
+     */
     public LLMClient tool(String name, String description, Runnable runnable) {
         return tool(name, description, args -> { runnable.run(); return "Done"; });
     }
 
+    /**
+     * Auto-register methods annotated with {@link LLMTool} or {@link OllamaTool}.
+     *
+     * <pre>{@code
+     * class TravelTools {
+     *     @LLMTool(name = "city_tip", description = "Return a short travel tip")
+     *     public String cityTip(@ToolParam(name = "city") String city) {
+     *         return "Visit early in " + city;
+     *     }
+     * }
+     *
+     * client.registerTools(new TravelTools());
+     * }</pre>
+     *
+     * @param service object containing annotated public or package-visible tool methods
+     * @return this client for fluent chaining
+     */
     public LLMClient registerTools(Object service) {
         int before = toolRegistry.getToolCount();
         toolRegistry.registerAll(service);
@@ -132,8 +191,31 @@ public class LLMClient implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Register all built-in system tools.
+     *
+     * <p>Includes file tools, directory search tools, web search/fetch tools, and
+     * shell command execution. Use carefully when exposing the client to untrusted
+     * prompts because these tools can read/write files and run commands.</p>
+     *
+     * @return this client for fluent chaining
+     */
     public LLMClient withSystemTools() { return withSystemTools("all"); }
 
+    /**
+     * Register a built-in system tool group.
+     *
+     * <p>Supported categories:</p>
+     * <ul>
+     *   <li>{@code "all"}: all built-in system tools</li>
+     *   <li>{@code "file"}: file, directory, grep, and metadata tools</li>
+     *   <li>{@code "web"}: {@code web_search} and {@code fetch_webpage}</li>
+     *   <li>{@code "shell"}: {@code run_bash}</li>
+     * </ul>
+     *
+     * @param category tool group name; unknown values fall back to {@code "all"}
+     * @return this client for fluent chaining
+     */
     public LLMClient withSystemTools(String category) {
         switch (category.toLowerCase()) {
             case "file" -> in.simpletools.llm.framework.tools.SystemTools.registerFileTools(toolRegistry);
@@ -150,6 +232,11 @@ public class LLMClient implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Register built-in HTTP tools for making REST requests from model tool calls.
+     *
+     * @return this client for fluent chaining
+     */
     public LLMClient withHttpTools() {
         in.simpletools.llm.framework.tools.HttpTools.registerAll(toolRegistry);
         toolRegistry.getAllTools().stream()
@@ -165,8 +252,24 @@ public class LLMClient implements AutoCloseable {
     }
 
     // ========== Synchronous Chat ==========
+    /**
+     * Send a user message and return the model reply.
+     *
+     * @param message user prompt
+     * @return assistant reply, or a string beginning with {@code Error:} when the request fails
+     */
     public String chat(String message) { return chat(message, Map.of()); }
 
+    /**
+     * Send a user message with per-request options.
+     *
+     * <p>Supported options include {@code system} for a temporary system prompt and
+     * {@code temperature} for sampling temperature.</p>
+     *
+     * @param message user prompt
+     * @param options per-request options such as {@code system} and {@code temperature}
+     * @return assistant reply, or a string beginning with {@code Error:} when the request fails
+     */
     public String chat(String message, Map<String, String> options) {
         try {
             return chatAsync(message, options).get(5, TimeUnit.MINUTES);
